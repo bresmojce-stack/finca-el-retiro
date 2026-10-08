@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v9.4</title>
+<title>Finca El Retiro v9.5</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -635,21 +635,46 @@ function convertirUnidad(valor, de, a, bultoKg){
   return valor * fd / fa;
 }
 function esConvertible(u){ const n = normUnidad(u); return !!U_FAM[n]; }
-function fmtFecha(d){ if(!d) return ''; try{ return new Date(d+'T00:00:00').toLocaleDateString('es-CO',{day:'2-digit',month:'short'});}catch(e){return d;} }
-/* Devuelve YYYY-MM-DD a partir de una fecha o timestamp, para inputs type=date */
-/* Fecha local YYYY-MM-DD (usa el reloj del teléfono, no UTC) */
+/* ── FECHAS: todo en hora de Colombia (America/Bogota, UTC-5 sin horario de verano) ── */
+const TZ_FINCA = 'America/Bogota';
+const RX_DIA = /^\d{4}-\d{2}-\d{2}$/;
+/* Día YYYY-MM-DD en Colombia. Sin argumento = hoy. Si ya es un día, lo devuelve igual. */
 function fechaLocalISO(dt){
+  if (dt && RX_DIA.test(String(dt))) return String(dt);
   const d = dt ? new Date(dt) : new Date();
-  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${dd}`;
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: TZ_FINCA });
 }
-/* Timestamp local con hora (para columnas de fecha-hora) */
-function ahoraLocalISO(){
-  const d = new Date();
-  const off = d.getTimezoneOffset();
-  return new Date(d.getTime() - off*60000).toISOString().slice(0,19);
+/* Momento actual como timestamp real (UTC con zona). Postgres lo guarda bien. */
+function ahoraLocalISO(){ return new Date().toISOString(); }
+/* Cualquier valor (día o timestamp de la BD) → día en Colombia */
+function fechaDia(v){ if (!v) return ''; return fechaLocalISO(v); }
+/* Para columnas fecha-hora: un día elegido se guarda al mediodía en Colombia; hoy = ahora */
+function tsDeDia(dia){
+  if (!dia) return ahoraLocalISO();
+  const s = String(dia);
+  if (!RX_DIA.test(s)) return s;
+  if (s === fechaLocalISO()) return ahoraLocalISO();
+  return s + 'T12:00:00-05:00';
 }
-function toDateInput(d){ if(!d) return fechaLocalISO(); return String(d).split('T')[0]; }
+/* Número para ordenar mezclas de días y timestamps */
+function tsOrden(v){ const s = String(v||''); const t = new Date(RX_DIA.test(s) ? s+'T12:00:00-05:00' : s).getTime(); return isNaN(t) ? 0 : t; }
+/* Valida una fecha que propone la IA: formato correcto y nunca en el futuro */
+function fechaAgente(f){ const s = String(f||'').trim(); if (!RX_DIA.test(s)) return null; return s > fechaLocalISO() ? null : s; }
+/* Calendario de ±7 días para que la IA no calcule "ayer" o "el lunes" de memoria */
+function calendarioCtx(){
+  const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  const base = new Date(fechaLocalISO() + 'T12:00:00-05:00').getTime();
+  const marcas = { '-2':' ← ANTIER', '-1':' ← AYER', '0':' ← HOY', '1':' ← MAÑANA', '2':' ← PASADO MAÑANA' };
+  const lineas = [];
+  for (let k = -7; k <= 7; k++){
+    const iso = fechaLocalISO(new Date(base + k*86400000));
+    lineas.push(`${dias[new Date(iso+'T12:00:00Z').getUTCDay()]} ${iso}${marcas[k]||''}`);
+  }
+  return lineas.join('\n');
+}
+function fmtFecha(d){ const s = fechaDia(d); if (!s) return ''; try{ return new Date(s+'T12:00:00-05:00').toLocaleDateString('es-CO',{day:'2-digit',month:'short',timeZone:TZ_FINCA}); }catch(e){ return s; } }
+function toDateInput(d){ if(!d) return fechaLocalISO(); return fechaDia(d); }
 function hoyISO(){ return fechaLocalISO(); }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -776,7 +801,7 @@ const HANDLERS = {
     return {success:true, msg:'Gasto registrado'};
   },
   add_ingreso: async (i) => {
-    const payload = { concepto:i.concepto, valor_total:i.valor_total, fecha: i.fecha || ahoraLocalISO() };
+    const payload = { concepto:i.concepto, valor_total:i.valor_total, fecha: tsDeDia(i.fecha) };
     if (!S.isOnline){ pushQueue({action:'add_ingreso', payload}); S.cache.ingresos.unshift(payload); return {success:true, msg:'Ingreso registrado (offline)'}; }
     const { error } = await sb.from('ingresos').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
@@ -861,7 +886,7 @@ const HANDLERS = {
   },
   log_activity: async (i) => {
     if (!S.user || !S.user.dbId) return {success:false, msg:'Sin usuario'};
-    const payload = { lote_id:i.lote_id||null, responsable_id:S.user.dbId, actividad:i.actividad, fecha: i.fecha || ahoraLocalISO() };
+    const payload = { lote_id:i.lote_id||null, responsable_id:S.user.dbId, actividad:i.actividad, fecha: tsDeDia(i.fecha) };
     if (!S.isOnline){
       pushQueue({action:'log_activity', payload});
       S.cache.activities.unshift({...payload, responsable:{nombre_corto:S.user.display}, lote:i.codigo?{codigo:i.codigo}:null});
@@ -984,7 +1009,8 @@ const HANDLERS = {
   },
   edit_activity: async (id, cambios) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const upd = (typeof cambios === 'string') ? { actividad: cambios } : cambios;
+    const upd = (typeof cambios === 'string') ? { actividad: cambios } : { ...cambios };
+    if (upd.fecha) upd.fecha = tsDeDia(upd.fecha); else delete upd.fecha;
     const { error } = await sb.from('bitacora').update(upd).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
@@ -1073,7 +1099,9 @@ const HANDLERS = {
   },
   edit_ingreso: async (id, changes) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('ingresos').update(changes).eq('id', id);
+    const upd = { ...changes };
+    if (upd.fecha) upd.fecha = tsDeDia(upd.fecha); else delete upd.fecha;
+    const { error } = await sb.from('ingresos').update(upd).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
     return {success:true};
@@ -1265,13 +1293,14 @@ const TOOL_ADD_GASTO = {
   parameters:{ type:'OBJECT', properties:{
     concepto:{type:'STRING'},
     valor_total:{type:'NUMBER'},
-    categoria:{type:'STRING', description:'Nutrición, Agroquímicos, Insumos Consumibles, Equipos y Herramientas, EPP, jornales, servicios, otros'}
+    categoria:{type:'STRING', description:'Nutrición, Agroquímicos, Insumos Consumibles, Equipos y Herramientas, EPP, jornales, servicios, otros'},
+    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['concepto','valor_total'] }
 };
 const TOOL_ADD_INGRESO = {
   name:'add_ingreso',
   description:'Registra un ingreso/venta.',
-  parameters:{ type:'OBJECT', properties:{ concepto:{type:'STRING'}, valor_total:{type:'NUMBER'} }, required:['concepto','valor_total'] }
+  parameters:{ type:'OBJECT', properties:{ concepto:{type:'STRING'}, valor_total:{type:'NUMBER'}, fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'} }, required:['concepto','valor_total'] }
 };
 const TOOL_ADD_INVENTORY = {
   name:'add_inventory',
@@ -1300,7 +1329,8 @@ const TOOL_LOG_ACTIVITY = {
   description:'Anota una labor realizada, novedad o evento en la bitácora de la finca.',
   parameters:{ type:'OBJECT', properties:{
     actividad:{type:'STRING', description:'Descripción completa de la labor. Incluye insumos usados, dosis, condiciones si aplica.'},
-    lote_codigo:{type:'STRING', description:'Código del lote. Omitir si es labor general de finca.'}
+    lote_codigo:{type:'STRING', description:'Código del lote. Omitir si es labor general de finca.'},
+    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['actividad'] }
 };
 const TOOL_COMPLETE_TASK = {
@@ -1333,7 +1363,7 @@ const TOOL_REGISTRAR_PLAGA = {
     tipo:{type:'STRING', description:'Nombre de la plaga o enfermedad. Ej: Áfidos, Mildiu, Gusano trozador, Botrytis'},
     descripcion:{type:'STRING', description:'Descripción de síntomas, parte afectada, extensión del daño'},
     severidad:{type:'STRING', description:'leve | moderada | severa'},
-    fecha_deteccion:{type:'STRING', description:'YYYY-MM-DD, por defecto hoy'}
+    fecha_deteccion:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['tipo','lote_codigo'] }
 };
 const TOOL_CONTROLAR_PLAGA = {
@@ -1344,7 +1374,8 @@ const TOOL_CONTROLAR_PLAGA = {
     lote_codigo:{type:'STRING'},
     producto:{type:'STRING', description:'Producto aplicado'},
     dosis:{type:'STRING', description:'Dosis usada'},
-    resultado:{type:'STRING', description:'Resultado observado del control'}
+    resultado:{type:'STRING', description:'Resultado observado del control'},
+    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['tipo_plaga'] }
 };
 
@@ -1360,7 +1391,8 @@ const TOOL_REGISTRAR_COSECHA = {
     lote_codigo:{type:'STRING'},
     kilos:{type:'NUMBER'},
     calidad:{type:'STRING', description:'primera | segunda | normal'},
-    observaciones:{type:'STRING'}
+    observaciones:{type:'STRING'},
+    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['lote_codigo','kilos'] }
 };
 const TOOL_REGISTRAR_JORNAL = {
@@ -1371,7 +1403,8 @@ const TOOL_REGISTRAR_JORNAL = {
     dias:{type:'NUMBER', description:'días trabajados'},
     valor_dia:{type:'NUMBER', description:'pesos pagados por día'},
     lote_codigo:{type:'STRING'},
-    nota:{type:'STRING'}
+    nota:{type:'STRING'},
+    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
   }, required:['trabajador','dias','valor_dia'] }
 };
 
@@ -1457,7 +1490,7 @@ async function runGeminiEngine(history, userPrompt, mediaData){
 
   const req = { contents };
 
-  const hoy = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  const hoy = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric', timeZone: TZ_FINCA });
   const hoyISO = fechaLocalISO();
 
   // Costo acumulado por lote (compras directas + consumo de insumos + jornales)
@@ -1489,7 +1522,7 @@ async function runGeminiEngine(history, userPrompt, mediaData){
 
   // Bitácora completa con fecha ISO para cálculos de tiempo
   const bitacoraCtx = (S.cache.activities || []).slice(0,25).map(b =>
-    `- [${b.fecha ? b.fecha.split('T')[0] : '?'}] ${b.lote?.codigo||'Finca general'}: ${b.actividad} (registrado por ${b.responsable?.nombre_corto||'—'})`
+    `- [${fechaDia(b.fecha)||'?'}] ${b.lote?.codigo||'Finca general'}: ${b.actividad} (registrado por ${b.responsable?.nombre_corto||'—'})`
   ).join('\n') || '(sin registros en bitácora)';
 
   // Tareas: pendientes + vencidas + próximas
@@ -1513,10 +1546,10 @@ async function runGeminiEngine(history, userPrompt, mediaData){
   const totalEgresos = egresosTotales();
   const totalIngresos = (S.cache.ingresos||[]).reduce((s,i)=>s+(parseFloat(i.valor_total)||0),0);
   const gastosCtx = (S.cache.compras||[]).filter(c=>c.origen!=='consumo').slice(0,8).map(c=>
-    `- [${c.fecha_compra?.split('T')[0]||'?'}] ${c.concepto}: $${(parseFloat(c.valor_total)||0).toLocaleString('es-CO')} (${c.categoria||'general'}${c.origen==='consumo'?', consumo interno por lote':''})`
+    `- [${fechaDia(c.fecha_compra)||'?'}] ${c.concepto}: $${(parseFloat(c.valor_total)||0).toLocaleString('es-CO')} (${c.categoria||'general'}${c.origen==='consumo'?', consumo interno por lote':''})`
   ).join('\n') || '(sin gastos)';
   const ingresosCtx = (S.cache.ingresos||[]).slice(0,8).map(i=>
-    `- [${i.fecha?.split('T')[0]||'?'}] ${i.concepto}: $${(parseFloat(i.valor_total)||0).toLocaleString('es-CO')}`
+    `- [${fechaDia(i.fecha)||'?'}] ${i.concepto}: $${(parseFloat(i.valor_total)||0).toLocaleString('es-CO')}`
   ).join('\n') || '(sin ingresos)';
 
   // Ciclos disponibles
@@ -1539,6 +1572,9 @@ async function runGeminiEngine(history, userPrompt, mediaData){
   const systemInstruction = `Eres el Agente Operativo de Finca El Retiro, Pradera, Valle del Cauca. Eres el administrador digital de la finca: gestionas labores, tiempos, insumos, finanzas y reportes. Eres práctico, proactivo y hablas como un mayordomo de finca experimentado.
 
 📅 HOY ES: ${hoy} (${hoyISO})
+CALENDARIO (úsalo para "ayer", "antier", "el lunes", "la semana pasada"; NO calcules fechas de memoria):
+${calendarioCtx()}
+REGLA DE FECHAS: si el usuario registra algo que pasó otro día, pasa SIEMPRE el parámetro "fecha" (YYYY-MM-DD) sacado de este calendario. "El lunes" sin más = el lunes pasado más reciente. Si no menciona día, omite "fecha" (queda hoy). Nunca uses fechas futuras para gastos, ingresos, labores, cosechas ni jornales.
 
 ═══════════════════════════════════
 PLAGAS Y ENFERMEDADES ACTIVAS
@@ -1668,7 +1704,7 @@ SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
 
   /* Instrucción corta para las vueltas de seguimiento: el contexto pesado
      solo se manda en la primera llamada, no se repite en cada acción. */
-  const instruccionCorta = `Eres el Agente Operativo de Finca El Retiro. Hoy es ${hoyISO}. Ya ejecutaste herramientas; usa sus resultados para responderle al usuario de forma breve y clara, o ejecuta otra herramienta si hace falta.`;
+  const instruccionCorta = `Eres el Agente Operativo de Finca El Retiro. Hoy es ${hoyISO}. Calendario:\n${calendarioCtx()}\n Ya ejecutaste herramientas; usa sus resultados para responderle al usuario de forma breve y clara, o ejecuta otra herramienta si hace falta.`;
 
   /* Loop agéntico: máx 2 vueltas para ahorrar tokens. */
   try{
@@ -1713,6 +1749,8 @@ async function executeToolCall(call){
   const args = call.args || {}, name = call.name;
   const hoyISO = fechaLocalISO();
   const moneyFmt = (n) => '$' + (parseFloat(n)||0).toLocaleString('es-CO', {maximumFractionDigits:0});
+  const fAg = fechaAgente(args.fecha);                 // null = hoy
+  const fTxt = (fAg && fAg !== hoyISO) ? ` · 📅 ${fmtFecha(fAg)}` : '';
 
   switch(name){
     case 'save_memory':
@@ -1727,11 +1765,11 @@ async function executeToolCall(call){
       const r = await HANDLERS.create_task({ titulo: args.titulo, asignado_a: args.asignado_a || 'todos', fecha_limite: args.fecha_limite || null, lote_id });
       return r.success ? `📋 Tarea programada: "${args.titulo}"` : `⚠️ Error tarea: ${r.msg}`;
     case 'add_gasto':
-      await HANDLERS.add_gasto({ concepto: args.concepto, categoria: args.categoria || 'general', valor_total: args.valor_total, lote_id: null });
-      return `💸 Gasto registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}`;
+      await HANDLERS.add_gasto({ concepto: args.concepto, categoria: args.categoria || 'general', valor_total: args.valor_total, lote_id: null, fecha: fAg });
+      return `💸 Gasto registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}${fTxt}`;
     case 'add_ingreso':
-      await HANDLERS.add_ingreso({ concepto: args.concepto, valor_total: args.valor_total });
-      return `💰 Ingreso registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}`;
+      await HANDLERS.add_ingreso({ concepto: args.concepto, valor_total: args.valor_total, fecha: fAg });
+      return `💰 Ingreso registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}${fTxt}`;
     case 'add_inventory':
       const ai = await HANDLERS.add_inventory({
         descripcion: args.descripcion, categoria: args.categoria || 'otro',
@@ -1758,8 +1796,8 @@ async function executeToolCall(call){
         const l = S.cache.lotes.find(x => x.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
         lid = l?.id || null; cod = l?.codigo || null;
       }
-      await HANDLERS.log_activity({ lote_id: lid, codigo: cod, actividad: args.actividad });
-      return `📝 Bitácora: ${args.actividad}${cod?` (${cod})`:''}`;
+      await HANDLERS.log_activity({ lote_id: lid, codigo: cod, actividad: args.actividad, fecha: fAg });
+      return `📝 Bitácora: ${args.actividad}${cod?` (${cod})`:''}${fTxt}`;
     case 'complete_task':
       const tk = (args.titulo || '').toLowerCase().trim();
       const task = S.cache.tasks.find(t => t.estado === 'pendiente' && t.titulo?.toLowerCase().includes(tk));
@@ -1792,14 +1830,14 @@ async function executeToolCall(call){
       return rU.success ? `🌱 Lote ${loteU.codigo} actualizado a estado: ${args.estado}` : `⚠️ Error: ${rU.msg}`;
     case 'registrar_plaga':
       const loteP = S.cache.lotes.find(l => l.codigo?.toLowerCase() === (args.lote_codigo||'').toLowerCase());
-      const rP = await HANDLERS.registrar_plaga({ lote_id: loteP?.id||null, tipo:args.tipo, descripcion:args.descripcion||'', severidad:args.severidad||'leve', fecha_deteccion:args.fecha_deteccion||hoyISO });
+      const rP = await HANDLERS.registrar_plaga({ lote_id: loteP?.id||null, tipo:args.tipo, descripcion:args.descripcion||'', severidad:args.severidad||'leve', fecha_deteccion:fechaAgente(args.fecha_deteccion)||fAg||hoyISO });
       return rP.success ? `🐛 Plaga registrada: ${args.tipo} en ${args.lote_codigo} (severidad: ${args.severidad||'leve'})` : `⚠️ Error: ${rP.msg}`;
     case 'controlar_plaga':
       const tP = (args.tipo_plaga||'').toLowerCase();
       const lCod = (args.lote_codigo||'').toLowerCase();
       const plagaC = S.cache.plagas.find(p => p.activa && p.tipo?.toLowerCase().includes(tP) && (!lCod || p.lote?.codigo?.toLowerCase()===lCod));
       if (!plagaC) return `⚠️ No encontré plaga activa con "${args.tipo_plaga}"${args.lote_codigo?' en '+args.lote_codigo:''}.`;
-      const rC = await HANDLERS.controlar_plaga(plagaC.id, { producto:args.producto, dosis:args.dosis, resultado:args.resultado });
+      const rC = await HANDLERS.controlar_plaga(plagaC.id, { producto:args.producto, dosis:args.dosis, resultado:args.resultado, fecha: fAg });
       return rC.success ? `✅ Control registrado: ${args.producto||'tratamiento'} para ${plagaC.tipo}` : `⚠️ Error: ${rC.msg}`;
     case 'create_lote':
       const cl = await HANDLERS.create_lote({ codigo: args.codigo, cultivo: args.cultivo, variedad: args.variedad || null });
@@ -1810,13 +1848,13 @@ async function executeToolCall(call){
     case 'registrar_cosecha':
       const loteCo = S.cache.lotes.find(l => l.codigo?.toLowerCase() === (args.lote_codigo||'').toLowerCase());
       if (!loteCo) return `⚠️ No encontré el lote "${args.lote_codigo}".`;
-      const rCo = await HANDLERS.registrar_cosecha({ lote_id:loteCo.id, kilos:args.kilos, calidad:args.calidad, observaciones:args.observaciones });
-      return rCo.success ? `🌾 Cosecha registrada: ${args.kilos} kg en ${loteCo.codigo}${args.calidad?' ('+args.calidad+')':''}` : `⚠️ Error: ${rCo.msg}`;
+      const rCo = await HANDLERS.registrar_cosecha({ lote_id:loteCo.id, kilos:args.kilos, calidad:args.calidad, observaciones:args.observaciones, fecha: fAg });
+      return rCo.success ? `🌾 Cosecha registrada: ${args.kilos} kg en ${loteCo.codigo}${args.calidad?' ('+args.calidad+')':''}${fTxt}` : `⚠️ Error: ${rCo.msg}`;
     case 'registrar_jornal':
       let loteJo = null;
       if (args.lote_codigo) loteJo = S.cache.lotes.find(l => l.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
-      const rJo = await HANDLERS.registrar_jornal({ trabajador:args.trabajador, dias:args.dias, valor_dia:args.valor_dia, lote_id:loteJo?.id||null, nota:args.nota });
-      return rJo.success ? `👷 Jornal: ${args.trabajador} · ${args.dias} día(s) · ${moneyFmt(rJo.total)}${loteJo?' → '+loteJo.codigo:''}` : `⚠️ Error: ${rJo.msg}`;
+      const rJo = await HANDLERS.registrar_jornal({ trabajador:args.trabajador, dias:args.dias, valor_dia:args.valor_dia, lote_id:loteJo?.id||null, nota:args.nota, fecha: fAg });
+      return rJo.success ? `👷 Jornal: ${args.trabajador} · ${args.dias} día(s) · ${moneyFmt(rJo.total)}${loteJo?' → '+loteJo.codigo:''}${fTxt}` : `⚠️ Error: ${rJo.msg}`;
     default: return `⚠️ Herramienta desconocida: ${name}`;
   }
 }
@@ -1993,7 +2031,7 @@ const AGENTES = {
   bitacora: {
     nombre:'Tina', rol:'ayudante de bitácora', icon:'ti-leaf', color:'green',
     ph:'Dicta o escribe la labor… ("ayer podé el lote 2")',
-    instruccion(){ return `Eres Tina, ayudante de bitácora de una finca. Hoy es ${hoyISO()}. Lotes: ${_lotesMini()}.
+    instruccion(){ return `Eres Tina, ayudante de bitácora de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}.
 Convierte lo que diga el usuario en un registro de labor. Si dice "ayer", "antier", "el lunes", calcula la fecha exacta (YYYY-MM-DD) desde hoy. Si menciona que usó un insumo (producto + cantidad + unidad), inclúyelo para descontar de bodega.
 Responde SOLO JSON:
 {"accion":"registrar_labor","actividad":"texto claro","fecha":"YYYY-MM-DD","lote_codigo":"código o null","insumo":{"nombre":"...","cantidad":number,"unidad":"..."} o null,"resumen":"frase corta para confirmar"}
@@ -2002,7 +2040,7 @@ Si es una pregunta y no un registro: {"accion":"responder","texto":"respuesta co
   bodega: {
     nombre:'Beto', rol:'ayudante de bodega', icon:'ti-building-warehouse', color:'brown',
     ph:'¿Qué entró o salió? ("entraron 2 bultos de urea a 80 mil")',
-    instruccion(){ return `Eres Beto, ayudante de bodega de una finca. Hoy es ${hoyISO()}. Productos: ${_bodegaMini()}. Lotes: ${_lotesMini()}.
+    instruccion(){ return `Eres Beto, ayudante de bodega de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Productos: ${_bodegaMini()}. Lotes: ${_lotesMini()}.
 Interpreta entradas (compras/reposición) y salidas (consumo) de insumos.
 Responde SOLO JSON:
 - Entrada: {"accion":"entrada","producto":"nombre","cantidad":number,"unidad":"kg|litro|cc|galon|bulto|unidad","precio_total":number o null,"lote_codigo":null,"resumen":"..."}
@@ -2013,7 +2051,7 @@ Usa los nombres de productos tal como los diga el usuario; la app corrige pareci
   dinero: {
     nombre:'Cuca', rol:'ayudante de dinero', icon:'ti-coin', color:'blue',
     ph:'Registra gasto, venta o jornal…',
-    instruccion(){ return `Eres Cuca, ayudante de finanzas de una finca. Hoy es ${hoyISO()}. Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
+    instruccion(){ return `Eres Cuca, ayudante de finanzas de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
 Responde SOLO JSON:
 - Gasto: {"accion":"gasto","concepto":"...","valor":number,"categoria":"Agroquímicos|Nutrición|Insumos Consumibles|Equipos y Herramientas|EPP|jornales|servicios|otro","fecha":"YYYY-MM-DD","lote_codigo":null,"resumen":"..."}
 - Ingreso/venta: {"accion":"ingreso","concepto":"...","valor":number,"fecha":"YYYY-MM-DD","resumen":"..."}
@@ -2024,7 +2062,7 @@ Calcula fechas reales si dice "ayer", etc.`; }
   tareas: {
     nombre:'Memo', rol:'ayudante de tareas', icon:'ti-checklist', color:'yellow',
     ph:'Programa o completa una tarea…',
-    instruccion(){ return `Eres Memo, ayudante de tareas de una finca. Hoy es ${hoyISO()}. Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
+    instruccion(){ return `Eres Memo, ayudante de tareas de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
 Responde SOLO JSON:
 - Crear: {"accion":"crear_tarea","titulo":"...","fecha_limite":"YYYY-MM-DD o null","asignado":"nombre o 'todos'","lote_codigo":null,"resumen":"..."}
 - Completar: {"accion":"completar_tarea","titulo":"palabras clave","resumen":"..."}
@@ -2034,7 +2072,7 @@ Si dice "en 3 días", "el viernes", calcula la fecha.`; }
   cultivos: {
     nombre:'Lalo', rol:'ayudante de lotes', icon:'ti-plant', color:'green',
     ph:'Crea un lote o cambia su estado…',
-    instruccion(){ return `Eres Lalo, ayudante de lotes de una finca. Hoy es ${hoyISO()}. Lotes: ${_lotesMini()}.
+    instruccion(){ return `Eres Lalo, ayudante de lotes de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}.
 Responde SOLO JSON:
 - Crear: {"accion":"crear_lote","codigo":"...","cultivo":"...","variedad":"... o null","resumen":"..."}
 - Estado: {"accion":"estado_lote","lote_codigo":"...","estado":"planificación|siembra|vegetativo|producción|cosecha|descanso","resumen":"..."}
@@ -2696,7 +2734,7 @@ function toast(msg, opts){
 function initial(name){ return (name||'?').trim()[0].toUpperCase(); }
 function adjustTextarea(){ const ta = document.getElementById('txt-inp'); if (!ta) return; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
 function fmtMoney(n){ return '$' + (parseFloat(n)||0).toLocaleString('es-CO', { maximumFractionDigits: 0 }); }
-function fmtDate(d){ if (!d) return ''; let dt; const sd = String(d); if (/^\d{4}-\d{2}-\d{2}$/.test(sd)) dt = new Date(sd+'T00:00:00'); else dt = new Date(d); return dt.toLocaleDateString('es-CO', { day:'2-digit', month:'short' }); }
+function fmtDate(d){ return fmtFecha(d); }
 function emptyState(icon, title, sub){ return `<div class="empty"><div class="empty-icon"><i class="ti ${icon}"></i></div><div class="empty-t">${title}</div><div class="empty-s">${sub}</div></div>`; }
 
 function renderNav(){
@@ -3110,7 +3148,7 @@ function renderDinero(){
     ...S.cache.compras.map(c => ({tipo:'gasto', id:c.id, concepto:c.concepto, valor:c.valor_total, fecha:c.fecha_compra, categoria:c.categoria, origen:c.origen, lote_id:c.lote_id})),
     ...S.cache.jornales.map(j => ({tipo:'jornal', id:j.id, concepto:`Jornal: ${j.trabajador} (${j.dias} día${parseFloat(j.dias)>1?'s':''})`, valor:j.valor_total, fecha:j.fecha, categoria:'jornales', lote_id:j.lote_id})),
     ...S.cache.ingresos.map(i => ({tipo:'ingreso', id:i.id, concepto:i.concepto, valor:i.valor_total, fecha:i.fecha}))
-  ].sort((a,b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 25);
+  ].sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha)).slice(0, 25);
 
   const movList = ultimos.length ? ultimos.map(m => {
     const conEsc = escA(m.concepto||'');
