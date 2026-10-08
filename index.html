@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v9.7</title>
+<title>Finca El Retiro v9.9</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -676,6 +676,21 @@ function calendarioCtx(){
 function fmtFecha(d){ const s = fechaDia(d); if (!s) return ''; try{ return new Date(s+'T12:00:00-05:00').toLocaleDateString('es-CO',{day:'2-digit',month:'short',timeZone:TZ_FINCA}); }catch(e){ return s; } }
 function toDateInput(d){ if(!d) return fechaLocalISO(); return fechaDia(d); }
 function hoyISO(){ return fechaLocalISO(); }
+/* Días de calendario (en Colombia) de 'a' a 'b' (b = hoy si falta). Sin desfases por hora ni zona del teléfono. */
+function diasEntre(a, b){
+  const da = fechaDia(a), db = fechaDia(b || fechaLocalISO());
+  if (!da || !db) return 0;
+  return Math.round((Date.parse(db + 'T12:00:00Z') - Date.parse(da + 'T12:00:00Z')) / 86400000);
+}
+function diasDesde(f){ return diasEntre(f); }                    // positivo = ya pasó
+function diasHasta(f){ return -diasEntre(f); }                   // positivo = falta
+/* Suma días a un día YYYY-MM-DD */
+function sumarDias(dia, n){ return fechaLocalISO(new Date(Date.parse(fechaDia(dia) + 'T12:00:00-05:00') + n*86400000)); }
+/* Hora actual (0-23) en la finca, aunque el teléfono tenga otra zona horaria */
+function horaFinca(){
+  const p = new Intl.DateTimeFormat('en-US', { hour:'numeric', hourCycle:'h23', timeZone: TZ_FINCA }).formatToParts(new Date());
+  return parseInt(p.find(x => x.type === 'hour')?.value, 10) % 24 || 0;
+}
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -729,7 +744,7 @@ FUENTES.costo_lote  = { nombre:'costo (gastos, insumos usados y jornales)', unid
 function fmtFechaLarga(dia){
   if (!dia) return '?';
   const txt = new Date(dia + 'T12:00:00-05:00').toLocaleDateString('es-CO', { weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone: TZ_FINCA });
-  const hace = Math.round((Date.parse(fechaLocalISO() + 'T12:00:00Z') - Date.parse(dia + 'T12:00:00Z')) / 86400000);
+  const hace = diasDesde(dia);
   const rel = hace === 0 ? 'hoy' : hace === 1 ? 'ayer' : hace > 1 ? `hace ${hace} días` : `en ${-hace} días`;
   return `${txt} (${rel})`;
 }
@@ -1553,9 +1568,9 @@ const ALL_TOOLS = [
 async function webSearchGemini(consulta){
   try{
     const reqW = { contents:[{ role:'user', parts:[{ text:`Busca en internet y responde en español de forma concisa (máximo 220 palabras), con datos concretos y confiables aplicables a agricultura en Colombia: ${consulta}` }] }], tools:[{ google_search:{} }] };
-    const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reqW) });
-    if (!res.ok) return 'No se pudo buscar (error de red o cuota).';
-    const data = await res.json();
+    const rq = await llamarGemini(reqW);
+    if (!rq.ok) return 'No se pudo buscar (error de red o cuota).';
+    const data = rq.data;
     const txt = (data.candidates?.[0]?.content?.parts || []).filter(p=>p.text).map(p=>p.text).join('').trim();
     return txt || 'La búsqueda no arrojó resultados.';
   } catch(e){ return 'No se pudo buscar: ' + e.message; }
@@ -1581,6 +1596,35 @@ function respuestaLocal(textoRaw){
     let r = hoy.length ? `📋 Para hoy (${hoy.length}):\n`+hoy.map(x=>'• '+x.titulo).join('\n') : '✅ No hay tareas para hoy.';
     if (venc.length) r += `\n\n⚠️ Vencidas (${venc.length}): `+venc.slice(0,5).map(x=>x.titulo).join(', ');
     return r;
+  }
+  const tn = _txt(t);
+  // Tareas de mañana
+  if (/(tarea|pendiente|hacer).*\bmanana\b|\bmanana\b.*(tarea|hacer|toca)/.test(tn)){
+    const man = sumarDias(hoyISO, 1);
+    const l = (S.cache.tasks||[]).filter(x=>x.estado==='pendiente' && x.fecha_limite===man);
+    return l.length ? `📋 Para mañana (${l.length}):\n`+l.map(x=>'• '+x.titulo+(x.asignado?.nombre_corto?` (${x.asignado.nombre_corto})`:'')).join('\n') : '✅ No hay tareas programadas para mañana.';
+  }
+  // Todas las tareas pendientes
+  if (/\b(que|cuales)\b.*\b(tareas|pendientes?)\b|^(tareas|pendientes)\b/.test(tn)){
+    const pend = (S.cache.tasks||[]).filter(x=>x.estado==='pendiente').sort((a,b)=>String(a.fecha_limite||'9999').localeCompare(String(b.fecha_limite||'9999')));
+    if (!pend.length) return '✅ No hay tareas pendientes.';
+    return `📋 Pendientes (${pend.length}):\n` + pend.slice(0,15).map(x=>`• ${x.titulo}${x.fecha_limite?' · '+fmtFecha(x.fecha_limite)+(x.fecha_limite<hoyISO?' ⚠️ vencida':''):''}${x.lote?.codigo?' · '+x.lote.codigo:''}`).join('\n') + (pend.length>15?`\n…y ${pend.length-15} más.`:'');
+  }
+  // Plagas activas
+  if (/\b(que|cuales|hay)\b.*\b(plagas?|enfermedad\w*)\b.*\b(activ\w*|hay|tenemos)\b|\bplagas? activas?\b/.test(tn)){
+    const pl = (S.cache.plagas||[]).filter(p=>p.activa);
+    return pl.length ? `🐛 Plagas activas (${pl.length}):\n` + pl.map(p=>`• ${p.tipo} · ${p.lote?.codigo||'finca'} · ${p.severidad||'leve'} · desde ${fmtFecha(p.fecha_deteccion)}${p.producto_usado?' · tratada con '+p.producto_usado:''}`).join('\n') : '✅ No hay plagas activas registradas.';
+  }
+  // Qué se está acabando en bodega
+  if (/\b(se (esta|estan) acabando|que (falta|hay que comprar)|stock bajo|poco stock|que se acabo|agotad)/.test(tn)){
+    const a = Alerts.compute();
+    const l = [...a.stockCero.map(i=>`• ${i.descripcion}: agotado`), ...a.stockBajo.map(i=>`• ${i.descripcion}: quedan ${i.cantidad_actual} ${i.unidad_medida||''}`)];
+    return l.length ? `📦 Por reponer:\n${l.join('\n')}` : '✅ Nada se está acabando en bodega.';
+  }
+  // Clima
+  if (/\b(clima|va a llover|llueve|lloviendo|lluvia|temperatura|pronostico)\b/.test(tn)){
+    const w = Weather.contextForAgent();
+    if (w) return '🌦️' + w.replace(/^\s*CLIMA ACTUAL/, ' Clima').replace(/\n- /g, '\n• ');
   }
   // Cuánto queda de un insumo
   let m = t.match(/cu[aá]nt[oa]s?\s+(?:hay|queda|tengo|me queda)\s+(?:de\s+)?(.+)/);
@@ -1610,7 +1654,7 @@ async function comprimirParaAgente(media){
 }
 
 async function runGeminiEngine(history, userPrompt, mediaData){
-  let contents = history.slice(-8).map(m => ({ role: m.role==='assistant'?'model':m.role, parts: [{ text: m.content }] }));
+  let contents = history.slice(-6).map(m => ({ role: m.role==='assistant'?'model':m.role, parts: [{ text: m.content }] }));
   const newParts = [{ text: userPrompt }];
   if (mediaData){
     let md = mediaData;
@@ -1652,7 +1696,7 @@ async function runGeminiEngine(history, userPrompt, mediaData){
   const weatherCtx = Weather.contextForAgent();
 
   // Bitácora completa con fecha ISO para cálculos de tiempo
-  const bitacoraCtx = (S.cache.activities || []).slice(0,25).map(b =>
+  const bitacoraCtx = (S.cache.activities || []).slice(0,15).map(b =>
     `- [${fechaDia(b.fecha)||'?'}] ${b.lote?.codigo||'Finca general'}: ${b.actividad} (registrado por ${b.responsable?.nombre_corto||'—'})`
   ).join('\n') || '(sin registros en bitácora)';
 
@@ -1688,16 +1732,16 @@ async function runGeminiEngine(history, userPrompt, mediaData){
 
   // Cosechas y jornales recientes
   const cosechasCtx = (S.cache.cosechas||[]).slice(0,8).map(c =>
-    `- [${c.fecha_recoleccion}] ${c.lote?.codigo||'?'}: ${c.volumen_kg} kg (${c.calidad||'normal'})${c.observaciones?' · '+c.observaciones:''}`
+    `- [${fechaDia(c.fecha_recoleccion)||'?'}] ${c.lote?.codigo||'?'}: ${c.volumen_kg} kg (${c.calidad||'normal'})${c.observaciones?' · '+c.observaciones:''}`
   ).join('\n') || '(sin cosechas registradas)';
   const jornalesCtx = (S.cache.jornales||[]).slice(0,8).map(j =>
-    `- [${j.fecha}] ${j.trabajador}: ${j.dias} día(s) x $${(parseFloat(j.valor_dia)||0).toLocaleString('es-CO')} = $${(parseFloat(j.valor_total)||0).toLocaleString('es-CO')}${j.lote_id?' · Lote '+(S.cache.lotes.find(l=>l.id===j.lote_id)?.codigo||'?'):''}`
+    `- [${fechaDia(j.fecha)||'?'}] ${j.trabajador}: ${j.dias} día(s) x $${(parseFloat(j.valor_dia)||0).toLocaleString('es-CO')} = $${(parseFloat(j.valor_total)||0).toLocaleString('es-CO')}${j.lote_id?' · Lote '+(S.cache.lotes.find(l=>l.id===j.lote_id)?.codigo||'?'):''}`
   ).join('\n') || '(sin jornales registrados)';
 
   // Plagas activas
   const plagasActivas = (S.cache.plagas||[]).filter(p=>p.activa);
   const plagasCtx = plagasActivas.length ? plagasActivas.map(p=>
-    `- [${p.fecha_deteccion}] ${p.lote?.codigo||'Finca'}: ${p.tipo} | Severidad: ${p.severidad} | ${p.descripcion||''}${p.producto_usado?' | Tratado con: '+p.producto_usado:' | Sin tratamiento aún'}`
+    `- [${fechaDia(p.fecha_deteccion)||'?'}] ${p.lote?.codigo||'Finca'}: ${p.tipo} | Severidad: ${p.severidad} | ${p.descripcion||''}${p.producto_usado?' | Tratado con: '+p.producto_usado:' | Sin tratamiento aún'}`
   ).join('\n') : '(sin plagas activas)';
 
   const systemInstruction = `Eres el Agente Operativo de Finca El Retiro, Pradera, Valle del Cauca. Eres el administrador digital de la finca: gestionas labores, tiempos, insumos, finanzas y reportes. Eres práctico, proactivo y hablas como un mayordomo de finca experimentado.
@@ -1842,9 +1886,9 @@ SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
   try{
     let transcript = '', ultConsulta = '';
     for (let ronda = 0; ronda < 3; ronda++){
-      const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(req) });
-      if (!res.ok) return `⚠️ Error de red o cuota (${res.status}).`;
-      const data = await res.json();
+      const rq = await llamarGemini(req);
+      if (!rq.ok) return `⚠️ Error de red o cuota (${rq.status || 'sin red'}).`;
+      const data = rq.data;
       if (data.promptFeedback?.blockReason) return `⚠️ Bloqueado: ${data.promptFeedback.blockReason}`;
       const cand = data.candidates?.[0];
       if (cand?.finishReason === 'SAFETY') return '⚠️ Bloqueado por seguridad.';
@@ -2001,7 +2045,7 @@ async function executeToolCall(call){
    segundo plano, y el resultado se guarda en la ficha del insumo.
    ═══════════════════════════════════════════════════════════════ */
 async function researchProduct(nombre, force = false){
-  if (!S.isOnline || !nombre) return;
+  if (!iaDisponible() || !nombre) return;
   try{
     const buscar = (x) => (x.descripcion||'').trim().toLowerCase() === nombre.trim().toLowerCase();
     const item = S.cache.inventory.find(buscar);
@@ -2017,9 +2061,9 @@ TIP: un consejo práctico de aplicación
 
 Al final, en una línea aparte, escribe exactamente: FRANJA: seguido de una sola palabra (roja, amarilla, azul o verde) según la franja toxicológica del producto; si es un abono u otro producto sin franja escribe FRANJA: ninguna.`;
     const reqInv = { contents:[{ role:'user', parts:[{ text: prompt }] }], tools:[{ google_search:{} }] };
-    const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(reqInv) });
-    if (!res.ok){ console.warn('researchProduct HTTP', res.status); return; }
-    const data = await res.json();
+    const rq = await llamarGemini(reqInv);
+    if (!rq.ok){ console.warn('researchProduct HTTP', rq.status); return; }
+    const data = rq.data;
     let ficha = (data.candidates?.[0]?.content?.parts || []).filter(p=>p.text).map(p=>p.text).join('').trim();
     if (!ficha) return;
     // Extraer la franja toxicológica de la respuesta
@@ -2158,6 +2202,391 @@ function buscarDifuso(texto, lista, campo){
    Cada agente ve solo su campo. Devuelven JSON estructurado (no
    ejecutan solos): la app muestra una tarjeta para confirmar/editar.
    ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   INTÉRPRETE LOCAL (SIN IA)
+   Entiende lo de todos los días con reglas: fechas, plata, cantidades,
+   lotes, productos y personas. Gemini solo se usa cuando esto no
+   alcanza (consejos, fotos, frases raras), así la cuota rinde mucho más.
+   ═══════════════════════════════════════════════════════════════ */
+const NUM_PAL = { un:1, uno:1, una:1, dos:2, tres:3, cuatro:4, cinco:5, seis:6, siete:7, ocho:8, nueve:9, diez:10, once:11, doce:12, quince:15, veinte:20, treinta:30, cuarenta:40, cincuenta:50, cien:100, medio:0.5, media:0.5 };
+const RX_NUM = '(\\d+(?:[.,]\\d+)*|' + Object.keys(NUM_PAL).join('|') + ')';
+const RX_UNI_INS = '(kilogramos?|kilos?|kgs?|bultos?|litros?|lts?|cc|ml|mililitros?|galon(?:es)?|gal|gramos?|grs?|g|arrobas?|unidades?|und|frascos?|tarros?|canecas?|sacos?|cajas?|rollos?|metros?)';
+const DIAS_SEM = ['domingo','lunes','martes','miercoles','jueves','viernes','sabado'];
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const _rxEsc = s => String(s).replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&');
+
+/* Texto normalizado para las reglas (minúsculas, sin tildes, sin signos) */
+function _txt(s){ return _normTxt(s).replace(/[¿?¡!;:"“”]/g, ' '); }
+function _pareceAPregunta(texto){
+  const t = _txt(texto).trim();
+  return /\?/.test(texto) || /^(y\s+)?(que|como|cual|cuales|donde|por que|porque|cuando|cuanto|cuanta|cuantos|cuantas|quien|sera|puedo|hay(?! que)|tengo(?! que)|me recomiendas|recomiendame|sabes)\b/.test(t);
+}
+
+/* "1.500" → 1500 · "1,5" → 1.5 · "dos" → 2 */
+function _numero(s){
+  s = String(s||'').trim();
+  if (NUM_PAL[s] != null) return NUM_PAL[s];
+  if (/^\d{1,3}(\.\d{3})+$/.test(s)) return parseFloat(s.replace(/\./g,''));
+  if (/^\d{1,3}(,\d{3})+$/.test(s)) return parseFloat(s.replace(/,/g,''));
+  return parseFloat(s.replace(',', '.')) || 0;
+}
+
+/* Plata mencionada: "$80.000", "80 mil", "1,5 millones", "80000". Devuelve {v, i, n} o null */
+function _plata(t){
+  let m;
+  if ((m = t.match(new RegExp('\\b' + RX_NUM + '\\s*(millones|millon|palos?)\\b(\\s+y\\s+medio)?')))) return { v: Math.round((_numero(m[1]) + (m[3] ? 0.5 : 0)) * 1e6), i:m.index, n:m[0].length };
+  if ((m = t.match(new RegExp('\\b' + RX_NUM + '\\s*(mil|lucas?|k)\\b(\\s+pesos)?')))) return { v: Math.round(_numero(m[1]) * 1000), i:m.index, n:m[0].length };
+  if ((m = t.match(/\$\s*(\d[\d.,]*)(\s+pesos)?/))) return { v: _numero(m[1]), i:m.index, n:m[0].length };
+  if ((m = t.match(/\b(\d{1,3}(?:\.\d{3})+|\d{4,})\b(?!\s*(?:kg|kilos?|gramos?|g|gr|grs|cc|ml|litros?|metros?|m2|matas?|plantas?|arboles?))(\s+pesos)?/))) return { v: _numero(m[1]), i:m.index, n:m[0].length };
+  return null;
+}
+
+/* Unidad dicha por el usuario → unidad de la app */
+function _uniNorm(u){
+  u = String(u||'').toLowerCase();
+  if (u === 'kgs') u = 'kg';
+  const n = normUnidad(u);
+  if (U_FAM[n]) return n;
+  if (/^(und|unidad)/.test(u)) return 'unidad';
+  return u.replace(/(es|s)$/, '');
+}
+/* Cantidad + unidad de un insumo: "2 bultos", "medio litro", "200 cc". Devuelve {cantidad, unidad, i, n} */
+function _cantidad(t){
+  const m = t.match(new RegExp('\\b' + RX_NUM + '\\s*' + RX_UNI_INS + '\\b'));
+  if (!m) return null;
+  return { cantidad: _numero(m[1]), unidad: _uniNorm(m[2]), i: m.index, n: m[0].length };
+}
+/* Nombre de producto que viene después de la cantidad: "2 bultos de urea a 80 mil" → "urea" */
+function _nombreTras(t, c){
+  if (!c) return '';
+  const m = t.slice(c.i + c.n).match(/^\s*(?:de|del)?\s*([a-z0-9ñ][a-z0-9ñ .-]*?)(?=\s+(?:a|al|por|en|para|que|y|con|el|la|los|las|hoy|ayer|antier)\b|[,$]|$)/);
+  return m ? m[1].trim() : '';
+}
+/* Producto de bodega mencionado (el que más coincida) */
+function _producto(t){
+  let mejor = null, pts = 0;
+  (S.cache.inventory||[]).forEach(i => {
+    const d = _normTxt(i.descripcion).trim(); if (!d) return;
+    if (t.includes(d)){ if (d.length * 10 > pts){ pts = d.length * 10; mejor = i; } return; }
+    const hits = d.split(/[^a-z0-9]+/).filter(w => w.length >= 4 && new RegExp('\\b' + w + '\\b').test(t)).length;
+    if (hits && hits * 5 > pts){ pts = hits * 5; mejor = i; }
+  });
+  return mejor;
+}
+/* Lote mencionado: "L2", "lote 2", "lote 02", "el lote del tomate" */
+function _lote(t){
+  const lotes = (S.cache.lotes||[]).slice().sort((a,b) => String(b.codigo||'').length - String(a.codigo||'').length);
+  for (const l of lotes){
+    const c = _normTxt(l.codigo).trim();
+    if (c && /[a-z]/.test(c) && new RegExp('(^|[^a-z0-9])' + _rxEsc(c) + '($|[^a-z0-9])').test(t)) return l;
+  }
+  const m = t.match(/\blote\s*(?:#|no\.?|numero)?\s*([a-z0-9-]+)/);
+  if (m){
+    const k = m[1], n = parseInt(k.replace(/\D/g,''), 10);
+    let l = lotes.find(x => _normTxt(x.codigo) === k);
+    if (!l && !isNaN(n)) l = lotes.find(x => parseInt(String(x.codigo).replace(/\D/g,''), 10) === n);
+    if (l) return l;
+  }
+  const porCultivo = lotes.filter(l => l.cultivo && new RegExp('\\b' + _rxEsc(_normTxt(l.cultivo).trim()) + '\\b').test(t));
+  return porCultivo.length === 1 ? porCultivo[0] : null;
+}
+/* Trabajador de la lista de usuarios mencionado en el texto */
+function _persona(t){
+  for (const u of (S.cache.users||[])){
+    const ns = [u.nombre_corto, ...String(u.nombre_corto||'').split(/\s+y\s+/), (u.nombre_completo||'').split(' ')[0]].map(   // "Juan Camilo y Pinto" responde a ambos nombres
+    n => _normTxt(n).replace(/[^a-z0-9 ]/g,'').trim()).filter(n => n.length >= 3);
+    if (ns.some(n => new RegExp('\\b' + n + '\\b').test(t))) return u.nombre_corto;
+  }
+  return null;
+}
+/* Nombre propio en el texto original: "le pagué a Pedro" → "Pedro" */
+function _nombrePropio(texto){
+  const m = String(texto||'').match(/\b(?:a|al|para|de|con)\s+(?:don\s+|doña\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)/);
+  if (!m) return '';
+  const n = _normTxt(m[1]);
+  return (MESES.includes(n) || DIAS_SEM.includes(n) || n === 'lote') ? '' : m[1];
+}
+
+/* Fecha dicha en el texto. futuro=true para tareas. Devuelve {fecha, i, n} o null */
+function _armarFecha(d, mes, anio, futuro){
+  if (!(d >= 1 && d <= 31 && mes >= 1 && mes <= 12)) return null;
+  const hoy = fechaLocalISO(); let y = anio || +hoy.slice(0,4);
+  const iso = yy => `${yy}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  if (!anio){ if (!futuro && iso(y) > hoy) y--; if (futuro && iso(y) < hoy) y++; }
+  const f = iso(y);
+  return fechaLocalISO(new Date(f + 'T12:00:00Z')) === f ? f : null;   // descarta 31 de febrero, etc.
+}
+function _fecha(t, futuro){
+  const hoy = fechaLocalISO();
+  const res = (fecha, m, off = 0) => fecha ? { fecha, i: m.index + off, n: m[0].length - off } : null;
+  const mult = u => u[0] === 's' ? 7 : u[0] === 'm' ? 30 : 1;
+  let m;
+  if ((m = t.match(/\bpasado\s+manana\b/))) return res(sumarDias(hoy, 2), m);
+  if ((m = t.match(/\b(antier|anteayer|antes de ayer|ante ayer)\b/))) return res(sumarDias(hoy, -2), m);
+  if ((m = t.match(/\bayer\b/))) return res(sumarDias(hoy, -1), m);
+  if ((m = t.match(/\b(hoy|esta manana|esta tarde|esta noche)\b/))) return res(hoy, m);
+  if ((m = t.match(/(^|[^a-z])manana\b/)) && !/\b(la|esta|por la|en la|de la)\s*$/.test(t.slice(0, m.index + m[1].length))) return res(sumarDias(hoy, 1), m, m[1].length);
+  if ((m = t.match(new RegExp('\\bhace\\s+' + RX_NUM + '\\s+(dias?|semanas?|mes(?:es)?)\\b')))) return res(sumarDias(hoy, -_numero(m[1]) * mult(m[2])), m);
+  if ((m = t.match(new RegExp('\\b(?:en|dentro de)\\s+' + RX_NUM + '\\s+(dias?|semanas?)\\b')))) return res(sumarDias(hoy, _numero(m[1]) * mult(m[2])), m);
+  if ((m = t.match(/\b(la proxima semana|la otra semana|la semana que viene)\b/))) return res(sumarDias(hoy, 7), m);
+  if ((m = t.match(/\bla semana pasada\b/))) return res(sumarDias(hoy, -7), m);
+  if ((m = t.match(new RegExp('\\b(?:el\\s+)?(\\d{1,2})\\s+de\\s+(' + MESES.join('|') + '|setiembre)(?:\\s+(?:de|del)\\s+(\\d{4}))?\\b')))){
+    const mes = m[2] === 'setiembre' ? 9 : MESES.indexOf(m[2]) + 1;
+    return res(_armarFecha(+m[1], mes, m[3] ? +m[3] : null, futuro), m);
+  }
+  if ((m = t.match(/\b(?:el\s+)?(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?\b/))){
+    let y = m[3] ? +m[3] : null; if (y && y < 100) y += 2000;
+    return res(_armarFecha(+m[1], +m[2], y, futuro), m);
+  }
+  if ((m = t.match(/\b(?:el\s+|este\s+)?(?:proximo\s+|pasado\s+)?(domingo|lunes|martes|miercoles|jueves|viernes|sabado)(\s+pasado|\s+que viene)?\b/))){
+    const obj = DIAS_SEM.indexOf(m[1]), dow = new Date(hoy + 'T12:00:00Z').getUTCDay();
+    const fut = /proximo|que viene/.test(m[0]) || (futuro && !/pasado/.test(m[0]));
+    const delta = fut ? ((obj - dow + 7) % 7 || 7) : -((dow - obj + 7) % 7 || 7);
+    return res(sumarDias(hoy, delta), m);
+  }
+  return null;
+}
+/* Rango de fechas para preguntas: "este mes", "la semana pasada", "en septiembre"… Devuelve {desde, hasta, i, n} */
+function _rango(t){
+  const hoy = fechaLocalISO(), y = +hoy.slice(0,4), mo = +hoy.slice(5,7);
+  const dow = new Date(hoy + 'T12:00:00Z').getUTCDay(), lunes = sumarDias(hoy, -((dow + 6) % 7));
+  const iniMes = (yy, mm) => `${yy}-${String(mm).padStart(2,'0')}-01`;
+  const finMes = (yy, mm) => fechaLocalISO(new Date(Date.UTC(yy, mm, 0, 12)));
+  const r = (desde, hasta, m) => ({ desde, hasta, i: m.index, n: m[0].length });
+  let m;
+  if ((m = t.match(/\bhoy\b/))) return r(hoy, hoy, m);
+  if ((m = t.match(/\bayer\b/))) return r(sumarDias(hoy,-1), sumarDias(hoy,-1), m);
+  if ((m = t.match(/\besta semana\b/))) return r(lunes, hoy, m);
+  if ((m = t.match(/\b(la )?semana pasada\b/))) return r(sumarDias(lunes,-7), sumarDias(lunes,-1), m);
+  if ((m = t.match(/\beste mes\b/))) return r(iniMes(y,mo), hoy, m);
+  if ((m = t.match(/\b(el )?mes pasado\b/))){ const yy = mo === 1 ? y-1 : y, mm = mo === 1 ? 12 : mo-1; return r(iniMes(yy,mm), finMes(yy,mm), m); }
+  if ((m = t.match(/\beste ano\b/))) return r(`${y}-01-01`, hoy, m);
+  if ((m = t.match(/\b(el )?ano pasado\b/))) return r(`${y-1}-01-01`, `${y-1}-12-31`, m);
+  if ((m = t.match(new RegExp('\\b(?:en\\s+)?(?:los|las)?\\s*ultim[oa]s\\s+' + RX_NUM + '\\s+(dias?|semanas?|mes(?:es)?)\\b')))){
+    const k = _numero(m[1]) * (m[2][0] === 's' ? 7 : m[2][0] === 'm' ? 30 : 1); return r(sumarDias(hoy,-k), hoy, m);
+  }
+  if ((m = t.match(new RegExp('\\b(?:en|de|durante)\\s+(' + MESES.join('|') + ')(?:\\s+(?:de|del)\\s+(\\d{4}))?\\b')))){
+    const mm = MESES.indexOf(m[1]) + 1, yy = m[2] ? +m[2] : (mm > mo ? y-1 : y); return r(iniMes(yy,mm), finMes(yy,mm), m);
+  }
+  return null;
+}
+
+/* Quita trozos (fechas, plata…) del texto original. Las posiciones salen del texto normalizado. */
+function _quitar(texto, ...spans){
+  let s = String(texto||'');
+  if (_normTxt(s).length !== s.length) return s;
+  spans.filter(Boolean).forEach(sp => { s = s.slice(0, sp.i) + ' '.repeat(sp.n) + s.slice(sp.i + sp.n); });   // mismo largo: las demás posiciones siguen sirviendo
+  return s;
+}
+function _frase(s){
+  s = String(s||'').replace(/\s+/g,' ').replace(/\s+([,.;:])/g,'$1').replace(/^[\s,.;:-]+|[\s,;:-]+$/g,'')
+    .replace(/\s+(a|al|de|del|en|por|y|el|la|para|con)$/i,'').trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
+}
+/* Raíz simple para buscar palabras: "fumigamos" → "fumig", "desyerbada" → "desyerb" */
+function _raiz(w){
+  const r = w.replace(/(aron|ieron|amos|imos|emos|ando|iendo|aste|iste|ados|idos|adas|idas|ado|ido|ada|ida|ciones|cion|es|e|o|a|s)$/, '');
+  return r.length >= 4 ? r : w;
+}
+function _categoria(t){
+  if (/jornal/.test(t)) return 'jornales';
+  if (/abon|urea|fertiliz|triple|\bcal\b|gallinaza|compost|dap\b|potasio|nitrato/.test(t)) return 'Nutrición';
+  if (/fungic|insectic|herbic|acaric|veneno|fumig|mancozeb|glifosato|roundup|coadyuv/.test(t)) return 'Agroquímicos';
+  if (/guante|bota|careta|mascara|overol|traje|gafas|tapabocas/.test(t)) return 'EPP';
+  if (/bomba|fumigadora|herramienta|machete|pala|azadon|guadana|manguera|tijera|motobomba|aspersor|gotero/.test(t)) return 'Equipos y Herramientas';
+  if (/fibra|alambre|estaca|plastico|canastilla|caja|bolsa|empaque|tutor|polisombra|cabuya/.test(t)) return 'Insumos Consumibles';
+  if (/transporte|flete|\bluz\b|\bagua\b|energia|internet|arriendo|servicio|gasolina|acpm|combustible|celular|plan de datos|impuesto|predial/.test(t)) return 'servicios';
+  return 'otro';
+}
+function _tareaPendiente(t){
+  let mejor = null, pts = 0;
+  (S.cache.tasks||[]).filter(x => x.estado === 'pendiente').forEach(x => {
+    const pal = _normTxt(x.titulo).split(/[^a-z0-9]+/).filter(w => w.length >= 4).map(_raiz);
+    if (!pal.length) return;
+    const hits = pal.filter(w => t.includes(w)).length, p = hits / pal.length + hits * 0.01;
+    if (hits && p > pts){ pts = p; mejor = x; }
+  });
+  return pts >= 0.34 ? mejor : null;
+}
+
+/* ── PREGUNTAS SOBRE LOS REGISTROS ── traduce la pregunta a filtros de consultarRegistros, sin IA */
+const RX_CONSEJO = /\b(debo|deberia|debemos|toca|hay que|conviene|recomiend\w*|se puede|puedo|podemos|sirve|como se|como hago|que hago|que le (echo|aplico|pongo)|que es|para que|por que|porque|cual es (el|la) mejor|dosis|mezclar|compatible)\b/;
+const STOP_CONSULTA = new Set(('cuando cuanto cuanta cuantos cuantas fue fueron era sido la el los las lo del de en por para que se ha he has han hemos hice hizo hicimos hicieron ' +
+  'ultima ultimo ultimas ultimos primera primer primero vez veces total todo toda todos todas lote lotes finca este esta estos estas mes semana ano dia dias hace hasta desde entre ' +
+  'plata dinero gastado gaste gastamos gastaron gasto gastos costado costo cuesta vale precio invertido invertimos pague pagado pagamos pagaron jornal jornales cosecha cosechas cosechado cosechamos ' +
+  'kilos kilo vendido vendimos vendi venta ventas ingreso ingresos plagas plaga registros registro labores labor hay tengo tenemos dime muestrame lista historial resumen ' +
+  'con sin al le les me mi nos un una uno es son va van lleva llevamos llevan llevo cual cuales como donde hecho hacer ya mas menos sobre pasado pasada ' +
+  'compre compramos compra compras comprado sacamos salido produjo producido sale salio ha hay habido tuvimos hubo cada').split(' '));
+function consultaLocal(texto){
+  const t0 = _txt(texto).replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t0 || RX_CONSEJO.test(t0)) return null;
+  const rango = _rango(t0);
+  const t = rango ? (t0.slice(0, rango.i) + ' ' + t0.slice(rango.i + rango.n)).replace(/\s+/g,' ').trim() : t0;
+
+  let tabla = 'labores';
+  if (/\bjornal/.test(t)) tabla = 'jornales';
+  else if (/cosech|produj|producido|produccion|\bkilos?\b.*\b(sac|recog|salier)/.test(t)) tabla = 'cosechas';
+  else if (/\bvend|\bventa|\bingres|\bganad|\bcobr|nos pagaron|me pagaron/.test(t)) tabla = 'ingresos';
+  else if (/plaga|enfermedad|hongo|gusano|trips|arana|mosca|acaro|ataque|\bgota\b|roya|antracnosis|mildeo|picudo|broca/.test(t)) tabla = 'plagas';
+  else if (/\bcompr|\b(cuesta|vale|precio)\b/.test(t)) tabla = 'gastos';
+  else if (/gast|plata|dinero|costo|costad|invert|pagu|pagad|pagamos|egreso/.test(t)) tabla = 'gasto_total';
+  const conValor = !['labores','plagas'].includes(tabla);
+
+  const pideHist = /\b(ultima vez|primera vez|hace cuanto|cuantas veces|que se hizo|que hicimos|que se ha hecho|historial|lista de|registros de)\b/.test(t);
+  const esCuando = /^(y\s+)?cuando\b/.test(t) || /\bcuando (fue|se|hicimos|hice|tuvimos|hubo|le|lo|la)\b/.test(t);
+  const esCuanto = /\bcuant[oa]s?\b/.test(t);
+  if (!pideHist && !esCuando && !(esCuanto && (conValor || /cuantas? veces|cuant[oa]s (fumig|abon|pod|rieg|labor|plaga|registro|cosecha|siembr)/.test(t)))) return null;
+
+  let op = 'lista';
+  if (/\bprimera vez\b|\bprimer[oa]?\b/.test(t)) op = 'primero';
+  else if (esCuando || /\bultima vez\b|\bultim[oa]\b|\bhace cuanto\b|\b(cuesta|vale|precio)\b/.test(t)) op = 'ultimo';
+  else if (/cuantas veces/.test(t) || (/\bcuant[oa]s\b/.test(t) && !/cuant[oa]s (kilos|pesos|millones)/.test(t))) op = 'contar';
+  else if (esCuanto || /\btotal\b/.test(t)) op = conValor ? 'total' : 'contar';
+
+  const lote = _lote(t);
+  if (lote && tabla === 'gasto_total') tabla = 'costo_lote';
+  const quitarLote = lote ? new Set([_normTxt(lote.codigo), ...(_normTxt(lote.codigo).match(/\d+/g)||[])]) : new Set();
+  const palabras = t.split(' ')
+    .filter(w => w.length >= 4 && !STOP_CONSULTA.has(w) && !quitarLote.has(w) && !/^\d+$/.test(w) && !MESES.includes(w) && !DIAS_SEM.includes(w))
+    .map(_raiz);
+  return { accion:'consultar', tabla, operacion: op, lote_codigo: lote?.codigo || null, palabras, desde: rango?.desde || null, hasta: rango?.hasta || null, _seguro: true };
+}
+
+/* ── REGISTROS POR SECCIÓN ── devuelve la misma propuesta que daría el agente de IA.
+   _seguro=false cuando faltan datos clave: entonces se intenta con la IA (si hay cuota). */
+const RX_COMPRA = /\b(compr\w*|entr(o|aron)|lleg(o|aron)|trajeron|traje|repus\w*|reponer|ingres(o|aron)|recibi\w*)\b/;
+const RX_SALIDA = /\b(use|uso|usamos|usaron|sali(o|eron)|saque|saco|sacamos|sacaron|gaste|gasto|gastamos|gastaron|eche|echo|echamos|echaron|aplic\w*|consum\w*)\b/;
+const RX_LABOR  = /\b(fumig|asperj|aplic|pode|podo|podamos|podaron|regu|regamos|regaron|riego|abon|fertiliz|sembr|trasplant|desyerb|limpi|guada|desbro|deshoj|cosech|recog|tutor|amarr|plate|fumigu|cerc|arregl|repar|desmalez|rocer|rozamos|deschup|ralee|ralea)\w*/;
+const ESTADOS_LOTE = { planificacion:'planificación', siembra:'siembra', sembrado:'siembra', vegetativo:'vegetativo', crecimiento:'vegetativo', produccion:'producción', produciendo:'producción', cosecha:'cosecha', cosechando:'cosecha', descanso:'descanso', descansando:'descanso' };
+
+function interpretarLocal(dominio, texto){
+  const t = _txt(texto);                              // mismo largo que el texto original (para _quitar)
+  if (!t.trim()) return null;
+  const q = consultaLocal(texto);
+  if (q) return q;
+  if (_pareceAPregunta(texto)) return null;          // consejos y preguntas abiertas: eso sí es para la IA
+  const hoy = hoyISO();
+
+  switch (dominio){
+    case 'bitacora': {
+      const f = _fecha(t, false), lote = _lote(t), fecha = fechaAgente(f?.fecha) || hoy;
+      const kg = /cosech|recog|sacamos|sacaron/.test(t) && t.match(new RegExp('\\b' + RX_NUM + '\\s*(kilos?|kgs?|kilogramos?|arrobas?|toneladas?)\\b'));
+      if (kg){
+        const kilos = _numero(kg[1]) * (/^arroba/.test(kg[2]) ? 12.5 : /^tonelada/.test(kg[2]) ? 1000 : 1);
+        return { accion:'cosecha', kilos, calidad:'normal', observaciones:'', lote_codigo: lote?.codigo || null, fecha, resumen:`Cosecha de ${kilos.toLocaleString('es-CO')} kg${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
+      }
+      const c = _cantidad(t), prod = c ? _producto(t) : null, nombre = prod?.descripcion || _nombreTras(t, c);
+      const actividad = _frase(_quitar(texto, f));
+      return { accion:'registrar_labor', actividad, fecha, lote_codigo: lote?.codigo || null,
+        insumo: (c && nombre) ? { nombre, cantidad: c.cantidad, unidad: c.unidad } : null,
+        resumen: `Labor${lote ? ' en ' + lote.codigo : ''}${fecha !== hoy ? ' · ' + fmtFecha(fecha) : ''}`, _seguro: actividad.length >= 3 };
+    }
+    case 'bodega': {
+      const f = _fecha(t, false), c = _cantidad(t), prod = _producto(t), lote = _lote(t);
+      const nombre = prod?.descripcion || _nombreTras(t, c);
+      const entra = RX_COMPRA.test(t), sale = RX_SALIDA.test(t);
+      const resto = _quitar(t, f, c);
+      const plata = _plata(resto);
+      const accion = entra && !sale ? 'entrada' : sale && !entra ? 'salida' : (plata ? 'entrada' : null);
+      if (!accion) return null;
+      const base = { producto: nombre, cantidad: c?.cantidad || '', unidad: c?.unidad || prod?.unidad_medida || '', fecha: fechaAgente(f?.fecha) || hoy, _seguro: !!(nombre && c) };
+      if (accion === 'entrada') return { accion, ...base, precio_total: plata?.v || '', lote_codigo: null, resumen: `Entrada a bodega${nombre ? ': ' + nombre : ''}` };
+      return { accion, ...base, lote_codigo: lote?.codigo || null, resumen: `Salida de bodega${nombre ? ': ' + nombre : ''}${lote ? ' para ' + lote.codigo : ''}` };
+    }
+    case 'dinero': {
+      const f = _fecha(t, false), fecha = fechaAgente(f?.fecha) || hoy;
+      const t2 = _quitar(t, f), plata = _plata(t2), valor = plata?.v || 0, lote = _lote(t2);
+      if (/\bjornal|\btrabaj(o|aron|amos)\b|\bdias? de trabajo\b/.test(t2)){
+        const d = t2.match(new RegExp('\\b' + RX_NUM + '\\s*(jornales|jornal|dias?)\\b'));
+        const dias = d ? _numero(d[1]) : 1;
+        let valor_dia = valor;
+        if (valor && dias > 1 && valor >= 150000 && !/\b(el|por|cada|al) (dia|jornal)\b|diario|c\/u|cada uno/.test(t2)) valor_dia = Math.round(valor / dias);
+        const trabajador = _persona(t2) || _nombrePropio(texto);
+        return { accion:'jornal', trabajador, dias, valor_dia: valor_dia || '', lote_codigo: lote?.codigo || null, fecha, resumen: `Jornal${trabajador ? ' de ' + trabajador : ''}`, _seguro: !!(valor && trabajador) };
+      }
+      const limpio = _frase(_quitar(texto, f, plata)
+        .replace(/^\s*(hoy|ayer|antier)?\s*(gaste|gasté|pague|pagué|compre|compré|compramos|pagamos|se pago|se pagó|se compro|se compró|vendi|vendí|vendimos|se vendio|se vendió|me pagaron|nos pagaron|recibi|recibí|registra|anota)\s+(en|de|por|el|la|los|las|un|una|unos|unas)?\s*/i, ''));
+      if (/\bvend\w*|\bventa\b|\bingres\w*|me pagaron|nos pagaron|\bcobr\w*|\brecibi\b/.test(t2))
+        return { accion:'ingreso', concepto: limpio || 'Venta', valor: valor || '', fecha, resumen: 'Ingreso / venta', _seguro: !!valor };
+      return { accion:'gasto', concepto: limpio, valor: valor || '', categoria: _categoria(t2), lote_codigo: lote?.codigo || null, fecha, resumen: 'Gasto', _seguro: !!(valor && limpio) };
+    }
+    case 'tareas': {
+      if (/\b(ya )?(hice|hicimos|termin\w*|complet\w*|acab\w*|listo|lista|cumpl\w*)\b/.test(t) && !/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|toca)\b/.test(t)){
+        const tk = _tareaPendiente(t);
+        return { accion:'completar_tarea', titulo: tk?.titulo || _frase(texto), resumen: tk ? `Completar: ${tk.titulo}` : 'Completar tarea', _seguro: !!tk };
+      }
+      const f = _fecha(t, true), lote = _lote(t), persona = _persona(t);
+      const titulo = _frase(_quitar(texto, f)
+        .replace(/^\s*(por favor\s+)?(recuerdame|recuérdame|recuerda|recordar|programa|programar|agenda|agendar|anota|apunta|crea\s+(una\s+)?tarea(\s+de|\s+para)?|tarea(\s+de|\s+para)?|hay que|tengo que|tenemos que|toca|debo|debemos|necesito)\s+(que\s+)?/i, ''));
+      const fl = f?.fecha && f.fecha >= hoyISO() ? f.fecha : '';
+      return { accion:'crear_tarea', titulo, fecha_limite: fl, asignado: persona || 'todos', lote_codigo: lote?.codigo || null, resumen: `Tarea${fl ? ' para el ' + fmtFecha(fl) : ''}`, _seguro: titulo.length >= 3 };
+    }
+    case 'cultivos': {
+      if (/\b(crea\w*|nuevo|nueva|agreg\w*|registr\w*|abr\w*)\b.*\blote\b|\blote nuevo\b/.test(t)){
+        const m = t.match(/\blote\s+(?:nuevo\s+)?([a-z]{0,3}-?\d+[a-z]?)\b/);
+        const codigo = m ? m[1].toUpperCase() : '';
+        const tras = m ? t.slice(m.index + m[0].length) : t;
+        const mc = tras.match(/\b(?:de|con|para)\s+([a-zñ]+)(?:\s+(?!en\b|y\b|de\b|con\b|para\b)([a-zñ0-9]+))?/);
+        const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+        return { accion:'crear_lote', codigo, cultivo: cap(mc?.[1] || ''), variedad: cap(mc?.[2] || ''), resumen: 'Lote nuevo', _seguro: !!(codigo && mc) };
+      }
+      const est = t.match(new RegExp('\\b(' + Object.keys(ESTADOS_LOTE).join('|') + ')\\b'));
+      if (est){
+        const lote = _lote(t);
+        return { accion:'estado_lote', lote_codigo: lote?.codigo || '', estado: ESTADOS_LOTE[est[1]], resumen: `Cambiar estado${lote ? ' de ' + lote.codigo : ''}`, _seguro: !!lote };
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+/* En el chat general: ¿de qué sección es esta frase? (null = que la atienda la IA) */
+function dominioDeTexto(texto){
+  const t = _txt(texto);
+  if (_pareceAPregunta(texto)) return null;
+  if (/\bjornal|\bjornales\b/.test(t)) return 'dinero';
+  if (/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|tenemos que|toca|tarea)\b/.test(t)) return 'tareas';
+  if (/\b(crea\w*|nuevo|nueva|agreg\w*)\b.*\blote\b/.test(t) || (/\blote\b/.test(t) && new RegExp('\\b(' + Object.keys(ESTADOS_LOTE).join('|') + ')\\b').test(t) && /\b(pasa|paso|esta|entro|quedo|cambia|cambiar|ponlo|pon)\b/.test(t))) return 'cultivos';
+  if (/\b(ya )?(termine|terminamos|complete|completamos|acabe|acabamos)\b/.test(t) && _tareaPendiente(t)) return 'tareas';
+  if (/\b(vend\w*|venta|me pagaron|nos pagaron|cobr\w*)\b/.test(t)) return 'dinero';
+  if (RX_COMPRA.test(t) && _cantidad(t)) return 'bodega';
+  if (/\b(gaste|pague|pagamos|compre|compramos|se pago|se compro)\b/.test(t) && _plata(t)) return 'dinero';
+  if (RX_LABOR.test(t)) return 'bitacora';
+  if (RX_SALIDA.test(t) && _cantidad(t) && _producto(t)) return 'bodega';
+  return null;
+}
+
+/* Tito (mapas) responde solo, sin IA: áreas y perímetros calculados del mapa */
+function respuestaMapas(texto){
+  const medir = l => { const pts = (S.cache.coordenadas||[]).filter(c => c.lote_id === l.id); return pts.length >= 3 ? MapEngine.calcDims(pts.map(p => ({ lat:p.latitud, lng:p.longitud }))) : null; };
+  const lote = _lote(_txt(texto));
+  if (lote){ const d = medir(lote); return d ? `${lote.codigo} (${lote.cultivo}): área ${MapEngine.fmtArea(d.area)}, perímetro ${MapEngine.fmtDist(d.perimetro)}.` : `${lote.codigo} todavía no tiene el contorno marcado en el mapa.`; }
+  let total = 0;
+  const lineas = (S.cache.lotes||[]).map(l => { const d = medir(l); if (d) total += d.area; return `• ${l.codigo} (${l.cultivo}): ${d ? MapEngine.fmtArea(d.area) + ' · ' + MapEngine.fmtDist(d.perimetro) : 'sin medir'}`; });
+  if (!lineas.length) return 'Todavía no hay lotes.';
+  return `Áreas de los lotes:\n${lineas.join('\n')}${total ? `\nTotal medido: ${MapEngine.fmtArea(total)}.` : ''}`;
+}
+
+/* Control de cuota: si Gemini responde 429 (cuota agotada) se deja de llamar un rato
+   y la app sigue trabajando solo con las reglas locales. */
+const IA = { pausaHasta: 0 };
+const MSG_SIN_IA = `La IA no está disponible ahora (sin cuota o sin internet), pero sin ella igual puedo:
+• Registrar labores, gastos, ventas, jornales, cosechas, tareas y movimientos de bodega. Ej: «ayer fumigué el lote 2 con 200 cc de mancozeb», «pagué 2 jornales a Pedro a 70 mil», «entraron 3 bultos de urea por 240 mil».
+• Responder cuándo, cuánto y cuántas veces. Ej: «¿cuándo fue la última fumigación del L1?», «¿cuánto gastamos este mes?».`;
+function iaDisponible(){ return S.isOnline && Date.now() > IA.pausaHasta; }
+/* Todas las llamadas a Gemini pasan por aquí: sin "pensamiento" extra (gasta tokens sin necesidad) */
+async function llamarGemini(req){
+  if (!iaDisponible()) return { ok:false, status: S.isOnline ? 429 : 0 };
+  req.generationConfig = { ...(req.generationConfig || {}), thinkingConfig: { thinkingBudget: 0 } };
+  let res;
+  try{ res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(req) }); }
+  catch(e){ return { ok:false, status:0 }; }
+  if (res.status === 429){ IA.pausaHasta = Date.now() + 10*60*1000; toast('La IA se quedó sin cuota por ahora. Sigo con lo que entiendo sin ella.'); }
+  if (!res.ok) return { ok:false, status: res.status };
+  return { ok:true, status: res.status, data: await res.json() };
+}
+
 function _lotesMini(){ return (S.cache.lotes||[]).map(l=>`${l.codigo} (${l.cultivo})`).join(', ') || 'ninguno'; }
 function _bodegaMini(){ return (S.cache.inventory||[]).map(i=>`${i.descripcion} [${i.unidad_medida||'u'}, quedan ${i.cantidad_actual}]`).join('; ') || 'vacía'; }
 function _usuariosMini(){ return (S.cache.users||[]).map(u=>u.nombre_corto).join(', ') || 'ninguno'; }
@@ -2216,7 +2645,7 @@ Responde SOLO JSON:
   mapas: {
     nombre:'Tito', rol:'ayudante de mapas', icon:'ti-map-2', color:'blue',
     ph:'Pregúntame por áreas o ubicación…',
-    soloConsulta:true,
+    soloConsulta:true, local: respuestaMapas,   // responde sin IA
     instruccion(){ const dims=(S.cache.lotes||[]).map(l=>{const pts=(S.cache.coordenadas||[]).filter(c=>c.lote_id===l.id);const d=pts.length>=3?MapEngine.calcDims(pts.map(p=>({lat:p.latitud,lng:p.longitud}))):null;return `${l.codigo}: ${d?MapEngine.fmtArea(d.area)+', '+MapEngine.fmtDist(d.perimetro):'sin medir'}`;}).join('; ');
       return `Eres Tito, ayudante de mapas. Áreas de lotes: ${dims||'ninguno'}. Responde SOLO JSON: {"accion":"responder","texto":"respuesta corta sobre áreas/perímetros/ubicación"}`; }
   }
@@ -2237,9 +2666,9 @@ async function parseAgente(dominio, texto, media){
     systemInstruction:{parts:[{text: spec.instruccion() + (spec.soloConsulta ? '' : INSTR_CONSULTA)}]},
     generationConfig:{ responseMimeType:'application/json', maxOutputTokens:500, temperature:0.2 }
   };
-  const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});
-  if(!res.ok) throw new Error('red/cuota '+res.status);
-  const data = await res.json();
+  const r = await llamarGemini(req);
+  if(!r.ok) throw new Error('red/cuota '+r.status);
+  const data = r.data;
   let txt=(data.candidates?.[0]?.content?.parts||[]).filter(p=>p.text).map(p=>p.text).join('').trim();
   txt=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
   const m=txt.match(/\{[\s\S]*\}/); if(!m) return null;
@@ -2273,6 +2702,8 @@ function camposDe(prop){
       {k:'valor_dia',label:'Valor por día',type:'number',v:prop.valor_dia||''},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_tarea': return [{k:'titulo',label:'Tarea',type:'text',v:prop.titulo||''},{k:'fecha_limite',label:'Fecha límite',type:'date',v:prop.fecha_limite||''},{k:'asignado',label:'Asignado a',type:'select',v:prop.asignado||'todos',options:userOpts},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
     case 'completar_tarea': return [{k:'titulo',label:'Tarea a completar',type:'text',v:prop.titulo||''}];
+    case 'cosecha': return [{k:'kilos',label:'Kilos',type:'number',v:prop.kilos||''},{k:'calidad',label:'Calidad',type:'select',v:prop.calidad||'normal',options:[{value:'primera',label:'Primera'},{value:'normal',label:'Normal'},{value:'segunda',label:'Segunda'}]},
+      {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'observaciones',label:'Observaciones',type:'text',v:prop.observaciones||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_lote': return [{k:'codigo',label:'Código',type:'text',v:prop.codigo||''},{k:'cultivo',label:'Cultivo',type:'text',v:prop.cultivo||''},{k:'variedad',label:'Variedad',type:'text',v:prop.variedad||''}];
     case 'estado_lote': return [{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'estado',label:'Estado',type:'select',v:prop.estado||'',options:['planificación','siembra','vegetativo','producción','cosecha','descanso'].map(e=>({value:e,label:e}))}];
     default: return [];
@@ -2347,6 +2778,7 @@ async function ejecutarAccion(v){
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
     case 'jornal':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.registrar_jornal({trabajador:v.trabajador,dias:parseFloat(v.dias)||1,valor_dia:parseFloat(v.valor_dia)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return r.success?`👷 Jornal · ${fmtMoney(r.total)}`:('⚠️ '+r.msg); }
     case 'crear_tarea':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.create_task({titulo:v.titulo,fecha_limite:v.fecha_limite||null,asignado_a:v.asignado||'todos',lote_id:lote?.id||null}); return r.success?'📋 Tarea programada':('⚠️ '+r.msg); }
+    case 'cosecha':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ Elige el lote de la cosecha'; const r=await HANDLERS.registrar_cosecha({lote_id:lote.id,kilos:parseFloat(v.kilos)||0,calidad:v.calidad||'normal',observaciones:v.observaciones||null,fecha:fechaAgente(v.fecha)||null}); return r.success?`🧺 Cosecha: ${(parseFloat(v.kilos)||0).toLocaleString('es-CO')} kg en ${lote.codigo}`:('⚠️ '+r.msg); }
     case 'completar_tarea':{ const tk=_norm(v.titulo); const t=(S.cache.tasks||[]).find(x=>x.estado==='pendiente'&&_norm(x.titulo).includes(tk)); if(!t) return '⚠️ No encontré esa tarea'; await HANDLERS.complete_task(t.id); return '✅ Tarea completada'; }
     case 'crear_lote':{ const r=await HANDLERS.create_lote({codigo:v.codigo,cultivo:v.cultivo,variedad:v.variedad||null}); return r.success?'🌱 Lote creado':('⚠️ '+r.msg); }
     case 'estado_lote':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ No encontré el lote'; const r=await HANDLERS.edit_lote(lote.id,{estado:v.estado}); return r.success?`🌱 ${lote.codigo} → ${v.estado}`:('⚠️ '+r.msg); }
@@ -2354,29 +2786,58 @@ async function ejecutarAccion(v){
   }
 }
 
-/* Flujo completo del agente de sección: parse → responder o confirmar → ejecutar */
+/* Propuesta para lo que dijo el usuario: primero las reglas locales; la IA solo si no alcanzan */
+function propuestaSinIA(dominio, texto){
+  if (_pareceAPregunta(texto)) return { accion:'responder', texto:'Sin la IA no puedo contestar esa pregunta ahora. Sí puedo responder cuándo, cuánto y cuántas veces sobre lo registrado, y registrar lo que me digas.' };
+  const t = String(texto||'').trim();
+  if (dominio === 'bitacora') return { accion:'registrar_labor', actividad:_frase(t), fecha:hoyISO(), lote_codigo:null, insumo:null, resumen:'Revisa y completa' };
+  if (dominio === 'dinero')   return { accion:'gasto', concepto:_frase(t), valor:'', categoria:'otro', lote_codigo:null, fecha:hoyISO(), resumen:'Revisa y completa' };
+  if (dominio === 'tareas')   return { accion:'crear_tarea', titulo:_frase(t), fecha_limite:'', asignado:'todos', lote_codigo:null, resumen:'Revisa y completa' };
+  return null;
+}
+async function proponer(dominio, texto, media){
+  const ag = AGENTES[dominio];
+  if (ag?.local && !media) return { accion:'responder', texto: ag.local(texto) };
+  const local = (!media && texto) ? interpretarLocal(dominio, texto) : null;
+  if (local && local._seguro) return local;
+  if (iaDisponible()){
+    toast(`${ag.nombre} está pensando…`);
+    try{ const p = await parseAgente(dominio, texto, media); if (p) return p; }
+    catch(e){ /* sin red o sin cuota: seguimos sin IA */ }
+  }
+  if (media && !texto){ return { accion:'responder', texto:'Para leer fotos necesito la IA y ahora no está disponible. Escríbeme lo que pasó.' }; }
+  if (local) return local;
+  if (dominio === 'bodega' && texto){
+    const tipo = await M.select({ title:'¿Entrada o salida?', sub: esc(texto), options:[{value:'entrada',label:'Entró a bodega (compra)',icon:'ti-download'},{value:'salida',label:'Salió de bodega (uso)',icon:'ti-upload',color:'brown'}] });
+    if (!tipo) return null;
+    return interpretarLocal('bodega', (tipo === 'entrada' ? 'entró ' : 'usé ') + texto) || { accion:tipo, producto:'', cantidad:'', unidad:'', fecha:hoyISO(), resumen:'Revisa y completa' };
+  }
+  return propuestaSinIA(dominio, texto);
+}
+
+/* Atiende un mensaje para una sección. Devuelve {texto, consulta} o null si se canceló */
+async function atenderAgente(dominio, texto, media){
+  const prop = await proponer(dominio, texto, media);
+  if (!prop) return null;
+  if (prop.accion === 'consultar') return { texto: consultarRegistros(prop), consulta:true };
+  if (prop.accion === 'responder') return { texto: prop.texto || 'No tengo ese dato.', consulta:true };
+  const v = await confirmAccion(dominio, prop);
+  if (!v) return null;
+  try{ return { texto: await ejecutarAccion(v), consulta:false }; }
+  catch(e){ return { texto: '⚠️ Error: ' + e.message, consulta:false }; }
+}
+
+/* Flujo del agente de sección (barra de cada pestaña) */
 async function flowAgenteSeccion(dominio, texto, media){
   if(!texto && !media) return;
   const ag=AGENTES[dominio];
-  toast(`${ag.nombre} está pensando…`);
-  let prop;
-  try{ prop=await parseAgente(dominio, texto, media); }
-  catch(e){ toast('Sin conexión con el agente'); return; }
-  if(!prop){ toast('No entendí, dilo de otra forma'); return; }
-  if(prop.accion==='consultar'){
-    const r = consultarRegistros(prop);
-    await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(r).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:''});
+  const r = await atenderAgente(dominio, texto, media);
+  if (!r){ return; }
+  if (r.consulta){
+    await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(r.texto).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:''});
     return;
   }
-  if(prop.accion==='responder'){
-    await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(prop.texto||'No tengo ese dato.'), okText:'Entendido', cancelText:''});
-    return;
-  }
-  const v=await confirmAccion(dominio, prop);
-  if(!v) return;
-  let msg='';
-  try{ msg=await ejecutarAccion(v); }catch(e){ toast('Error: '+e.message); return; }
-  if(msg) toast(msg);
+  if (r.texto) toast(r.texto);
   render();
 }
 
@@ -2601,7 +3062,7 @@ const Voice = {
 
 const Alerts = {
   _scheduledHours: [7, 12, 18], _lastFiredHour: null, _intervalId: null, SNOOZE_KEY: 'finca_snoozed_alerts',
-  _today(){ const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; },
+  _today(){ return fechaLocalISO(); },
   _getSnoozed(){
     try {
       const data = JSON.parse(localStorage.getItem(this.SNOOZE_KEY) || '{}');
@@ -2628,19 +3089,17 @@ const Alerts = {
       return inq > 0 && act > 0 && act < (inq * 0.15);
     });
     const stockCero = inv.filter(i => { if (snoozed[`stock_${i.id}`]) return false; return parseFloat(i.cantidad_actual) === 0; });
-    const ahora = new Date();
     const porVencer = inv.filter(i => {
       if (!i.fecha_vencimiento || snoozed[`venc_${i.id}`]) return false;
       if ((parseFloat(i.cantidad_actual)||0) <= 0) return false;
-      const dias = Math.ceil((new Date(i.fecha_vencimiento) - ahora) / 86400000);
-      return dias <= 30;
-    }).map(i => ({ ...i, _diasVenc: Math.ceil((new Date(i.fecha_vencimiento) - ahora) / 86400000) }));
+      return diasHasta(i.fecha_vencimiento) <= 30;
+    }).map(i => ({ ...i, _diasVenc: diasHasta(i.fecha_vencimiento) }));
     return { vencidas, hoy, proximas, sinFecha, mias, stockBajo, stockCero, porVencer, today };
   },
   urgentCount(){ const a = this.compute(); return a.vencidas.length + a.hoy.length + a.stockCero.length + a.porVencer.filter(i=>i._diasVenc<=0).length; },
   pendingTasksCount(){ return (S.cache.tasks || []).filter(t => t.estado === 'pendiente').length; },
   greeting(){
-    const h = new Date().getHours();
+    const h = horaFinca();
     if (h < 5) return '🌙 Buenas noches'; if (h < 12) return '☀️ Buenos días'; if (h < 18) return '👋 Buenas tardes'; return '🌙 Buenas noches';
   },
   async showPanel(){
@@ -2654,7 +3113,7 @@ const Alerts = {
         <button class="alert-check" data-complete-alert="${t.id}" title="Marcar completada"><i class="ti ti-check"></i></button>
         <div class="alert-row-body">
           <div class="alert-row-title">${t.titulo}</div>
-          <div class="alert-row-meta">${t.fecha_limite || 'Sin fecha'}${t.lote?.codigo?' · '+t.lote.codigo:''}</div>
+          <div class="alert-row-meta">${t.fecha_limite ? fmtFecha(t.fecha_limite) : 'Sin fecha'}${t.lote?.codigo?' · '+t.lote.codigo:''}</div>
         </div>
         <button class="btn btn-sm" onclick="flowDeleteTask('${t.id}', '${escA(t.titulo||'')}'); M._close(true);" style="background:transparent;color:var(--tx3);font-size:16px;padding:4px" title="Borrar alerta"><i class="ti ti-trash"></i></button>
       </div>`;
@@ -2677,7 +3136,7 @@ const Alerts = {
       const vencRow = (i) => `<div class="alert-row" id="alert-venc-${i.id}">
         <div class="alert-row-body">
           <div class="alert-row-title">${esc(i.descripcion)}</div>
-          <div class="alert-row-meta">${i._diasVenc < 0 ? `Venció hace ${Math.abs(i._diasVenc)} días` : i._diasVenc === 0 ? 'Vence HOY' : `Vence en ${i._diasVenc} días`} (${i.fecha_vencimiento}) · ${i.cantidad_actual} ${esc(i.unidad_medida||'')} en stock</div>
+          <div class="alert-row-meta">${i._diasVenc < 0 ? `Venció hace ${Math.abs(i._diasVenc)} días` : i._diasVenc === 0 ? 'Vence HOY' : `Vence en ${i._diasVenc} días`} (${fmtFecha(i.fecha_vencimiento)}) · ${i.cantidad_actual} ${esc(i.unidad_medida||'')} en stock</div>
         </div>
         <button class="alert-snooze" data-snooze-venc="${i.id}" title="Silenciar 7 días"><i class="ti ti-bell-off"></i></button>
       </div>`;
@@ -2740,7 +3199,7 @@ const Alerts = {
   startScheduler(){
     if (this._intervalId) clearInterval(this._intervalId);
     this._intervalId = setInterval(() => {
-      const now = new Date(), h = now.getHours(), m = now.getMinutes();
+      const h = horaFinca(), m = new Date().getMinutes();
       if (this._scheduledHours.includes(h) && m < 2 && this._lastFiredHour !== h){ this._lastFiredHour = h; this.fireNotification(); }
       if (h === 0 && m === 0) this._lastFiredHour = null;
     }, 60 * 1000);
@@ -2822,8 +3281,8 @@ const Weather = {
     let forecastHtml = '';
     if (d && d.time){
       forecastHtml = d.time.map((dateStr, i) => {
-        const dt = new Date(dateStr + 'T12:00:00'), days = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-        const dayName = i === 0 ? 'Hoy' : (i === 1 ? 'Mañana' : days[dt.getDay()]), dd = this.describe(d.weather_code[i]);
+        const dt = new Date(dateStr + 'T12:00:00Z'), days = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+        const dayName = i === 0 ? 'Hoy' : (i === 1 ? 'Mañana' : days[dt.getUTCDay()]), dd = this.describe(d.weather_code[i]);
         return `<div class="weather-day"><div class="weather-day-name">${dayName}</div><div class="weather-day-icon ${dd.cls}"><i class="ti ${dd.icon}"></i></div><div class="weather-day-temp">${Math.round(d.temperature_2m_min[i])}° / ${Math.round(d.temperature_2m_max[i])}°</div><div class="weather-day-rain"><i class="ti ti-droplet"></i>${d.precipitation_probability_max[i]}%</div></div>`;
       }).join('');
     }
@@ -2909,8 +3368,8 @@ function renderInternet(){
 }
 
 function buildProactivePanel(){
-  const hoy = new Date(), hoyISO = fechaLocalISO();
-  const h = hoy.getHours();
+  const hoyISO = fechaLocalISO();
+  const h = horaFinca();
   const greeting = h < 5 ? '🌙 Buenas noches' : h < 12 ? '☀️ Buenos días' : h < 18 ? '👋 Buenas tardes' : '🌙 Buenas noches';
   const items = [];
 
@@ -2925,7 +3384,7 @@ function buildProactivePanel(){
   // Lotes con ciclo por vencer (< 7 días)
   S.cache.lotes.forEach(l => {
     if (!l.fecha_siembra || !l.ciclo_dias) return;
-    const diasTrans = Math.floor((hoy - new Date(l.fecha_siembra)) / 86400000);
+    const diasTrans = diasDesde(l.fecha_siembra);
     const diasRest = l.ciclo_dias - diasTrans;
     if (diasRest >= 0 && diasRest <= 7) items.push({ cls:'warn', icon:'ti-plant', text:`Lote ${l.codigo} (${l.cultivo}) en ${diasRest === 0 ? 'cosecha HOY' : diasRest+' días para cosecha'}` });
     if (diasRest < 0) items.push({ cls:'urgent', icon:'ti-plant-off', text:`Lote ${l.codigo}: ciclo vencido hace ${Math.abs(diasRest)} días` });
@@ -2933,9 +3392,9 @@ function buildProactivePanel(){
 
   // Lotes activos sin fumigación reciente (> 15 días)
   S.cache.lotes.filter(l => ['vegetativo','producción'].includes(l.estado)).forEach(l => {
-    const lastFumig = S.cache.activities.filter(a => a.lote?.codigo === l.codigo && /fumig|aplica|fungic|insect/i.test(a.actividad||'')).sort((a,b) => new Date(b.fecha)-new Date(a.fecha))[0];
+    const lastFumig = S.cache.activities.filter(a => a.lote?.codigo === l.codigo && /fumig|aplica|fungic|insect/i.test(a.actividad||'')).sort((a,b) => tsOrden(b.fecha)-tsOrden(a.fecha))[0];
     if (!lastFumig) { items.push({ cls:'info', icon:'ti-spray', text:`Lote ${l.codigo}: sin fumigaciones registradas` }); return; }
-    const dias = Math.floor((hoy - new Date(lastFumig.fecha)) / 86400000);
+    const dias = diasDesde(lastFumig.fecha);
     if (dias > 15) items.push({ cls:'info', icon:'ti-spray', text:`Lote ${l.codigo}: ${dias} días sin fumigación` });
   });
 
@@ -3057,7 +3516,7 @@ function renderTareas(){
         <div class="task-row-title">${esc(t.titulo)}</div>
         <div class="task-row-meta">
           <span><i class="ti ti-map-pin"></i> ${t.lote?.codigo || 'Finca'}</span>
-          ${t.fecha_limite ? `<span><i class="ti ti-calendar"></i> ${t.fecha_limite}</span>` : `<span style="color:var(--tx3)"><i class="ti ti-calendar-off"></i> Sin fecha</span>`}
+          ${t.fecha_limite ? `<span><i class="ti ti-calendar"></i> ${fmtFecha(t.fecha_limite)}</span>` : `<span style="color:var(--tx3)"><i class="ti ti-calendar-off"></i> Sin fecha</span>`}
           ${t.asignado?.nombre_corto ? `<span><i class="ti ti-user"></i> ${t.asignado.nombre_corto}</span>` : ''}
         </div>
       </div>
@@ -3116,20 +3575,20 @@ function renderCultivos(){
   if (S.activeLote){
     const l = S.activeLote, tareas = S.cache.tasks.filter(t => t.lote?.codigo === l.codigo), pend = tareas.filter(t => t.estado === 'pendiente'), bit = S.cache.activities.filter(a => a.lote?.codigo === l.codigo);
     // Ciclo info
-    const hoy = new Date(); let cicloHtml = '';
+    let cicloHtml = '';
     if (l.fecha_siembra && l.ciclo_dias){
-      const siembra = new Date(l.fecha_siembra), diasTrans = Math.floor((hoy - siembra) / 86400000);
+      const diasTrans = diasDesde(l.fecha_siembra);
       const pct = Math.min(100, Math.round((diasTrans / l.ciclo_dias) * 100));
       const diasRest = Math.max(0, l.ciclo_dias - diasTrans);
       cicloHtml = `<div class="card" style="margin-bottom:10px;background:linear-gradient(135deg,var(--gl),#F4FAE6);border-color:var(--gb)">
         <div style="font-size:11px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px"><i class="ti ti-timeline"></i> Ciclo de cultivo</div>
-        <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--tx);margin-bottom:4px"><span>Siembra: <b>${l.fecha_siembra}</b></span><span><b>${diasTrans}</b> días transcurridos</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--tx);margin-bottom:4px"><span>Siembra: <b>${fmtFecha(l.fecha_siembra)}</b></span><span><b>${diasTrans}</b> días transcurridos</span></div>
         <div class="ciclo-bar"><div class="ciclo-bar-fill" style="width:${pct}%"></div></div>
         <div class="ciclo-info"><span>${pct}% del ciclo</span><span>Faltan <b>${diasRest}</b> días</span></div>
       </div>`;
     } else if (l.fecha_siembra){
-      const siembra = new Date(l.fecha_siembra), diasTrans = Math.floor((hoy - siembra) / 86400000);
-      cicloHtml = `<div class="spec-box" style="margin-bottom:10px"><b>Siembra:</b> ${l.fecha_siembra} · <b>${diasTrans} días</b> transcurridos desde la siembra.</div>`;
+      const diasTrans = diasDesde(l.fecha_siembra);
+      cicloHtml = `<div class="spec-box" style="margin-bottom:10px"><b>Siembra:</b> ${fmtFecha(l.fecha_siembra)} · <b>${diasTrans} días</b> transcurridos desde la siembra.</div>`;
     }
     return `<div class="panel">
       <button class="lote-back" id="btn-back-lote"><i class="ti ti-arrow-left"></i> Volver a lotes</button>
@@ -3164,7 +3623,7 @@ function renderCultivos(){
       <div class="panel-h"><div class="sec-t" style="margin:0"><span><i class="ti ti-clock"></i> Pendientes (${pend.length})</span></div><div class="row gap6" style="flex-wrap:wrap;justify-content:flex-end"><button class="btn btn-sm btn-blue" onclick="flowMapaLote('${l.id}','${l.codigo}')"><i class="ti ti-map-pin"></i> Mapa</button><button class="btn btn-sm btn-yellow" id="btn-new-task"><i class="ti ti-plus"></i> Tarea</button><button class="btn btn-sm btn-soft" id="btn-new-apunte"><i class="ti ti-edit"></i> Labor</button><button class="btn btn-sm btn-brown" onclick="flowNuevoJornal('${l.id}')" style="background:var(--p-brown);color:#7A4A08;border-color:#E8C99A"><i class="ti ti-user"></i> Jornal</button></div></div>
       <div class="card">${pend.length ? pend.map(t => {
         const tit = escA(t.titulo||'');
-        return `<div class="task-row" id="task-row-${t.id}"><div class="task-check" data-complete-task="${t.id}"><i class="ti ti-check"></i></div><div class="task-row-body"><div class="task-row-title">${esc(t.titulo)}</div><div class="task-row-meta"><span><i class="ti ti-calendar"></i> ${t.fecha_limite || 'Sin fecha'}</span></div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditTask('${t.id}')" style="padding:4px;border:none"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteTask('${t.id}','${tit}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>`;
+        return `<div class="task-row" id="task-row-${t.id}"><div class="task-check" data-complete-task="${t.id}"><i class="ti ti-check"></i></div><div class="task-row-body"><div class="task-row-title">${esc(t.titulo)}</div><div class="task-row-meta"><span><i class="ti ti-calendar"></i> ${t.fecha_limite ? fmtFecha(t.fecha_limite) : 'Sin fecha'}</span></div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditTask('${t.id}')" style="padding:4px;border:none"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteTask('${t.id}','${tit}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>`;
       }).join('') : emptyState('ti-checks','Lote al día','Sin tareas pendientes.')}</div>
       <div class="sec-t mt12"><span><i class="ti ti-notebook"></i> Bitácora del lote</span></div>
       <div class="card">${bit.length ? bit.map(b => {
@@ -3178,7 +3637,7 @@ function renderCultivos(){
         const totalKg = cs.reduce((a,c)=>a+(parseFloat(c.volumen_kg)||0),0);
         const costoL = (S.cache.compras||[]).filter(c=>c.lote_id===l.id).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const resumen = `<div class="map-dims" style="margin-bottom:8px"><div><b>${totalKg.toLocaleString('es-CO')} kg</b>Cosechado</div>${costoL>0?`<div><b>${fmtMoney(costoL/totalKg)}</b>Costo por kg</div><div><b>${fmtMoney(costoL)}</b>Invertido</div>`:''}</div>`;
-        return resumen + `<div class="card" style="padding:4px 14px">${cs.slice(0,8).map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${c.volumen_kg} kg · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${c.fecha_recoleccion}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`;
+        return resumen + `<div class="card" style="padding:4px 14px">${cs.slice(0,8).map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${c.volumen_kg} kg · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`;
       })()}
       <div class="sec-t mt12"><span><i class="ti ti-photo"></i> Fotos del lote</span><div class="row gap6"><button class="btn btn-sm btn-soft" onclick="flowGaleria('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-photo"></i> Ver todas</button><button class="btn btn-sm btn-yellow" onclick="flowNuevaFoto('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-camera"></i> Foto</button></div></div>
       ${(() => {
@@ -3191,7 +3650,7 @@ function renderCultivos(){
         if (!pl.length) return `<div class="text-tiny" style="padding:8px 0;color:var(--tx3)"><i class="ti ti-circle-check" style="color:var(--g)"></i> Sin plagas activas en este lote.</div>`;
         return pl.map(p=>`<div class="plaga-card ${p.severidad||'leve'}" style="margin-bottom:6px">
           <div class="plaga-header"><div class="plaga-icon ${p.severidad||'leve'}"><i class="ti ti-bug"></i></div>
-          <div style="flex:1"><div class="plaga-title">${esc(p.tipo)}</div><div class="plaga-meta"><span>${p.fecha_deteccion}</span></div></div>
+          <div style="flex:1"><div class="plaga-title">${esc(p.tipo)}</div><div class="plaga-meta"><span>${fmtFecha(p.fecha_deteccion)}</span></div></div>
           <span class="plaga-badge ${p.severidad||'leve'}">${p.severidad||'leve'}</span></div>
           ${p.descripcion?`<div class="plaga-desc">${clampHTML(p.descripcion,{limit:110})}</div>`:''}
           <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
@@ -3203,19 +3662,18 @@ function renderCultivos(){
     </div>`;
   }
   // Lista de lotes con progreso de ciclo
-  const hoyMs = new Date().getTime();
   return `<div class="panel">
     <div class="panel-h"><div class="panel-title">Lotes</div><div class="row gap6"><button class="btn btn-sm btn-soft" onclick="flowGestionCiclos()"><i class="ti ti-plant-2"></i> Ciclos</button><button class="btn btn-sm btn-primary" id="btn-new-lote"><i class="ti ti-plus"></i> Crear</button></div></div>
     ${S.cache.lotes.length ? S.cache.lotes.map(l => {
       let cicloMini = '';
       if (l.fecha_siembra && l.ciclo_dias){
-        const diasTrans = Math.floor((hoyMs - new Date(l.fecha_siembra).getTime()) / 86400000);
+        const diasTrans = diasDesde(l.fecha_siembra);
         const pct = Math.min(100, Math.round((diasTrans / l.ciclo_dias)*100));
         const diasRest = Math.max(0, l.ciclo_dias - diasTrans);
         cicloMini = `<div class="ciclo-bar" style="margin-top:8px"><div class="ciclo-bar-fill" style="width:${pct}%"></div></div><div class="ciclo-info"><span>Día ${diasTrans} de ${l.ciclo_dias}</span><span>${diasRest > 0 ? diasRest+' días para cosecha' : '⚠️ Ciclo vencido'}</span></div>`;
       } else if (l.fecha_siembra){
-        const diasTrans = Math.floor((hoyMs - new Date(l.fecha_siembra).getTime()) / 86400000);
-        cicloMini = `<div class="text-tiny" style="margin-top:4px"><i class="ti ti-calendar"></i> Siembra: ${l.fecha_siembra} · ${diasTrans} días</div>`;
+        const diasTrans = diasDesde(l.fecha_siembra);
+        cicloMini = `<div class="text-tiny" style="margin-top:4px"><i class="ti ti-calendar"></i> Siembra: ${fmtFecha(l.fecha_siembra)} · ${diasTrans} días</div>`;
       }
       return `<div class="card lote-card" data-lote="${l.codigo}">
         <div class="lote-card-row">
@@ -3241,7 +3699,7 @@ window.flowHistorialLote = function(loteId){
   const comprasRaw = (S.cache.compras||[]).filter(c => c.lote_id === loteId);
   const jornalesRaw = (S.cache.jornales||[]).filter(j => j.lote_id === loteId)
     .map(j => ({ id:j.id, concepto:`Jornal: ${j.trabajador} (${j.dias} día${parseFloat(j.dias)>1?'s':''})`, valor_total:j.valor_total, fecha_compra:j.fecha, categoria:'jornales', _jornal:true }));
-  const comprasL = [...comprasRaw, ...jornalesRaw].sort((a,b)=> new Date(b.fecha_compra) - new Date(a.fecha_compra));
+  const comprasL = [...comprasRaw, ...jornalesRaw].sort((a,b)=> tsOrden(b.fecha_compra) - tsOrden(a.fecha_compra));
   const consumos = comprasRaw.filter(c => c.origen === 'consumo');
   const totInsumos = consumos.reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
   const totJorn = jornalesRaw.reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
@@ -3503,10 +3961,10 @@ function renderItemCard(i){
   const franja = franjaChip(i);
   let venceChip = '';
   if (i.fecha_vencimiento){
-    const diasV = Math.ceil((new Date(i.fecha_vencimiento) - new Date()) / 86400000);
+    const diasV = diasHasta(i.fecha_vencimiento);
     venceChip = diasV < 0 ? `<span class="badge bg-red"><i class="ti ti-alert-triangle"></i> Vencido</span>`
       : diasV <= 30 ? `<span class="badge bg-orange"><i class="ti ti-clock"></i> Vence en ${diasV} d</span>`
-      : `<span class="badge bg-yellow"><i class="ti ti-calendar"></i> Vence ${i.fecha_vencimiento}</span>`;
+      : `<span class="badge bg-yellow"><i class="ti ti-calendar"></i> Vence ${fmtFecha(i.fecha_vencimiento)}</span>`;
   }
   const comprado = compradoInv(i);
   const tieneCosto = costoU > 0 || comprado > 0;
@@ -4056,9 +4514,9 @@ async function analizarEtiqueta(media){
   const cats = Object.entries(BODEGA_STRUCT).map(([k,v]) => `"${k}" (subcategorías válidas: ${v.subs.join(', ')})`).join('; ');
   const prompt = `Lee la etiqueta del producto agrícola que aparece en la foto. Devuelve SOLO un JSON válido, sin markdown ni texto adicional, con esta forma exacta: {"descripcion":"nombre comercial corto","categoria":"...","subcategoria":"...","detalles":"ingredientes activos con su concentración"}. La categoria debe ser EXACTAMENTE una de estas: ${cats}. La subcategoria debe ser una de las válidas para esa categoría. Si la imagen no es una etiqueta legible devuelve {"error":"no legible"}.`;
   const req = { contents:[{ role:'user', parts:[{ inlineData:{ mimeType: media.type, data: media.b64 } }, { text: prompt }] }] };
-  const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(req) });
-  if (!res.ok) return null;
-  const data = await res.json();
+  const rq = await llamarGemini(req);
+  if (!rq.ok) return null;
+  const data = rq.data;
   let txt = (data.candidates?.[0]?.content?.parts || []).filter(p=>p.text).map(p=>p.text).join('').trim();
   txt = txt.replace(/```json/gi,'').replace(/```/g,'').trim();
   const m = txt.match(/\{[\s\S]*\}/);
@@ -4759,12 +5217,28 @@ function bindAppEvents(){
     const mediaData = S.pendImg; S.pendImg = null; render();
     setTimeout(() => document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'}), 60);
     // Respuesta local sin IA para consultas comunes (ahorra tokens). Solo si no hay foto.
+    // Primero sin IA: respuestas rápidas, preguntas sobre registros y registros comunes.
     const local = !mediaData ? respuestaLocal(text) : null;
+    const consulta = (!mediaData && !local) ? consultaLocal(text) : null;
+    const dom = (!mediaData && !local && !consulta) ? dominioDeTexto(text) : null;
+    const prop = dom ? interpretarLocal(dom, text) : null;
     if (local){
       hist.push({ role:'assistant', content: local });
+    } else if (consulta){
+      hist.push({ role:'assistant', content: consultarRegistros(consulta) });
+    } else if (prop && (prop._seguro || !iaDisponible())){
+      S.loading = false; render();
+      const r = await atenderAgente(dom, text, null);
+      hist.push({ role:'assistant', content: r ? (r.texto || '✅ Hecho.') : 'Listo, no guardé nada.' });
+    } else if (!iaDisponible()){
+      hist.push({ role:'assistant', content: MSG_SIN_IA });
     } else {
       if (S.isOnline){ try{ await refreshAll(); } catch(e){} }
-      try{ const reply = await runGeminiEngine(hist.slice(0,-1), text || 'Analiza esto.', mediaData); hist.push({ role:'assistant', content: reply }); }
+      try{
+        let reply = await runGeminiEngine(hist.slice(0,-1), text || 'Analiza esto.', mediaData);
+        if (/^⚠️ (Error de red o cuota|Sin conexión)/.test(reply)) reply += '\n\n' + MSG_SIN_IA;
+        hist.push({ role:'assistant', content: reply });
+      }
       catch(e){ hist.push({ role:'assistant', content:'⚠️ Error de red. Inténtalo de nuevo.' }); }
     }
     if (mediaData && !mediaData.isVideo && S.isOnline){
