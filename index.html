@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v9.8</title>
+<title>Finca El Retiro v9.9</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -2293,7 +2293,8 @@ function _lote(t){
 /* Trabajador de la lista de usuarios mencionado en el texto */
 function _persona(t){
   for (const u of (S.cache.users||[])){
-    const ns = [u.nombre_corto, (u.nombre_completo||'').split(' ')[0]].map(n => _normTxt(n).replace(/[^a-z0-9 ]/g,'').trim()).filter(n => n.length >= 3);
+    const ns = [u.nombre_corto, ...String(u.nombre_corto||'').split(/\s+y\s+/), (u.nombre_completo||'').split(' ')[0]].map(   // "Juan Camilo y Pinto" responde a ambos nombres
+    n => _normTxt(n).replace(/[^a-z0-9 ]/g,'').trim()).filter(n => n.length >= 3);
     if (ns.some(n => new RegExp('\\b' + n + '\\b').test(t))) return u.nombre_corto;
   }
   return null;
