@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v9.6</title>
+<title>Finca El Retiro v9.7</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -677,6 +677,111 @@ function fmtFecha(d){ const s = fechaDia(d); if (!s) return ''; try{ return new 
 function toDateInput(d){ if(!d) return fechaLocalISO(); return fechaDia(d); }
 function hoyISO(){ return fechaLocalISO(); }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   CONSULTAS SOBRE LOS REGISTROS
+   La IA solo traduce la pregunta a filtros; la búsqueda, las fechas
+   y las sumas las hace este código sobre TODOS los registros.
+   ═══════════════════════════════════════════════════════════════ */
+function _normTxt(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+const SINONIMOS = [
+  ['fumig','asperj','fungicid','insecticid','acaricid','herbicid','plaguicid','nematicid','roundup'],
+  ['abon','fertiliz','nutric','foliar','drench','fertirrig','urea','triple'],
+  ['rieg','regar','regad'],
+  ['poda','podar','desbrot','deshoj','chupon'],
+  ['cosech','recolect','recog','corte'],
+  ['siembr','sembr','trasplant','plantul'],
+  ['tutor','amarr','guia','fibra'],
+];
+function _expandir(palabras){
+  const lista = Array.isArray(palabras) ? palabras : (palabras ? [palabras] : []);
+  const out = new Set();
+  lista.forEach(p => {
+    const n = _normTxt(p).trim(); if (!n) return;
+    out.add(n.length > 5 ? n.slice(0, Math.max(5, n.length - 2)) : n);
+    SINONIMOS.forEach(grupo => { if (grupo.some(r => n.startsWith(r))) grupo.forEach(r => out.add(r)); });
+  });
+  return [...out];
+}
+function _fila(fecha, textos, loteId, desc, valor){
+  const dia = fechaDia(fecha);
+  return { dia, orden: tsOrden(fecha), texto: _normTxt(textos.filter(Boolean).join(' ')), lote_id: loteId||null, desc, valor };
+}
+const _num = v => parseFloat(v)||0;
+const FUENTES = {
+  labores:  { nombre:'labores de bitácora', unidad:null,
+    filas:() => (S.cache.activities||[]).map(b => _fila(b.fecha, [b.actividad, b.observaciones, b.insumo_aplicado, b.maquinaria_usada], b.lote_id, b.actividad + (b.responsable?.nombre_corto ? ` (${b.responsable.nombre_corto})` : ''), null)) },
+  gastos:   { nombre:'gastos', unidad:'$',
+    filas:() => (S.cache.compras||[]).filter(c => c.origen !== 'consumo').map(c => _fila(c.fecha_compra, [c.concepto, c.categoria, c.proveedor], c.lote_id, c.concepto, _num(c.valor_total))) },
+  jornales: { nombre:'jornales', unidad:'$',
+    filas:() => (S.cache.jornales||[]).map(j => _fila(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id, `Jornal ${j.trabajador}: ${j.dias} día(s)`, _num(j.valor_total))) },
+  ingresos: { nombre:'ingresos y ventas', unidad:'$', sinLote:true,
+    filas:() => (S.cache.ingresos||[]).map(i => _fila(i.fecha, [i.concepto], null, i.concepto, _num(i.valor_total))) },
+  cosechas: { nombre:'cosechas', unidad:'kg',
+    filas:() => (S.cache.cosechas||[]).map(c => _fila(c.fecha_recoleccion, [c.calidad, c.observaciones, 'cosecha'], c.lote_id, `${_num(c.volumen_kg).toLocaleString('es-CO')} kg (${c.calidad||'normal'})`, _num(c.volumen_kg))) },
+  plagas:   { nombre:'plagas y enfermedades', unidad:null,
+    filas:() => (S.cache.plagas||[]).map(p => _fila(p.fecha_deteccion || p.creado_en, [p.tipo, p.descripcion, p.producto_usado], p.lote_id, `${p.tipo}${p.severidad?' ('+p.severidad+')':''}${p.producto_usado?' · tratado con '+p.producto_usado+(p.fecha_control?' el '+fmtFecha(p.fecha_control):''):''}${p.activa?' · sigue activa':''}`, null)) },
+};
+FUENTES.gasto_total = { nombre:'gastos + jornales', unidad:'$', filas:() => [...FUENTES.gastos.filas(), ...FUENTES.jornales.filas()] };
+FUENTES.costo_lote  = { nombre:'costo (gastos, insumos usados y jornales)', unidad:'$',
+  filas:() => [...(S.cache.compras||[]).map(c => _fila(c.fecha_compra, [c.concepto, c.categoria], c.lote_id, c.concepto, _num(c.valor_total))), ...FUENTES.jornales.filas()] };
+
+function fmtFechaLarga(dia){
+  if (!dia) return '?';
+  const txt = new Date(dia + 'T12:00:00-05:00').toLocaleDateString('es-CO', { weekday:'short', day:'numeric', month:'short', year:'numeric', timeZone: TZ_FINCA });
+  const hace = Math.round((Date.parse(fechaLocalISO() + 'T12:00:00Z') - Date.parse(dia + 'T12:00:00Z')) / 86400000);
+  const rel = hace === 0 ? 'hoy' : hace === 1 ? 'ayer' : hace > 1 ? `hace ${hace} días` : `en ${-hace} días`;
+  return `${txt} (${rel})`;
+}
+function _cifra(v, unidad){ return unidad === '$' ? fmtMoney(v) : unidad === 'kg' ? `${(Math.round(v*10)/10).toLocaleString('es-CO')} kg` : String(v); }
+
+function consultarRegistros(q){
+  q = q || {};
+  const clave = String(q.tabla||'').toLowerCase().trim();
+  const src = FUENTES[clave];
+  if (!src) return `No sé consultar "${q.tabla}". Opciones: ${Object.keys(FUENTES).join(', ')}.`;
+  const op = ['ultimo','primero','lista','total','contar'].includes(q.operacion) ? q.operacion : 'lista';
+
+  let lote = null;
+  if (q.lote_codigo && String(q.lote_codigo).toLowerCase() !== 'null'){
+    lote = resolverLote(q.lote_codigo);
+    if (!lote) return `No encontré el lote "${q.lote_codigo}".`;
+  }
+  const palabras = _expandir(q.palabras);
+  const desde = RX_DIA.test(q.desde||'') ? q.desde : null;
+  const hasta = RX_DIA.test(q.hasta||'') ? q.hasta : null;
+
+  let filas = src.filas();
+  if (lote && !src.sinLote) filas = filas.filter(f => f.lote_id === lote.id);
+  if (palabras.length) filas = filas.filter(f => palabras.some(w => f.texto.includes(w)));
+  if (desde) filas = filas.filter(f => f.dia >= desde);
+  if (hasta) filas = filas.filter(f => f.dia <= hasta);
+  filas.sort((a,b) => b.orden - a.orden);
+
+  const codLote = id => (S.cache.lotes||[]).find(l => l.id === id)?.codigo;
+  const linea = f => `• ${fmtFechaLarga(f.dia)}${codLote(f.lote_id) ? ' · ' + codLote(f.lote_id) : ''} · ${f.desc}${f.valor != null && src.unidad ? ' · ' + _cifra(f.valor, src.unidad) : ''}`;
+  const filtro = [src.nombre, lote ? 'lote ' + lote.codigo : '', (q.palabras && [].concat(q.palabras).length) ? `que mencionen "${[].concat(q.palabras).join(', ')}"` : '', desde ? 'desde ' + fmtFecha(desde) : '', hasta ? 'hasta ' + fmtFecha(hasta) : ''].filter(Boolean).join(' · ');
+
+  if (!filas.length) return `🔎 No encontré registros de ${filtro}.`;
+  const total = filas.reduce((a,f) => a + (f.valor||0), 0);
+  const rango = filas.length > 1 ? ` (entre ${fmtFecha(filas[filas.length-1].dia)} y ${fmtFecha(filas[0].dia)})` : '';
+
+  switch (op){
+    case 'ultimo':  return `🔎 Última vez (${filtro}):\n${linea(filas[0])}${filas.length > 1 ? `\nEn total hay ${filas.length} registros${rango}.` : ''}`;
+    case 'primero': return `🔎 Primera vez (${filtro}):\n${linea(filas[filas.length-1])}`;
+    case 'contar':  return `🔎 ${filas.length} registro(s) de ${filtro}${rango}.`;
+    case 'total':
+      if (!src.unidad) return `🔎 ${filas.length} registro(s) de ${filtro}${rango}.`;
+      return `🔎 Total de ${filtro}: ${_cifra(total, src.unidad)} en ${filas.length} registro(s)${rango}.`;
+    default: {
+      const top = filas.slice(0, 15).map(linea).join('\n');
+      const extra = filas.length > 15 ? `\n…y ${filas.length - 15} más.` : '';
+      const tot = src.unidad ? `\nTotal: ${_cifra(total, src.unidad)}.` : '';
+      return `🔎 ${filas.length} registro(s) de ${filtro}:\n${top}${extra}${tot}`;
+    }
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    ESTADO GLOBAL
    ═══════════════════════════════════════════════════════════════ */
@@ -1219,22 +1324,34 @@ async function loadUsers(){
   } catch(e){ console.warn('Sin red al cargar usuarios'); }
 }
 
+/* Trae todas las filas de una consulta, de 1000 en 1000 (Supabase entrega máx. 1000 por vez) */
+async function traerTodo(armar){
+  const todas = [];
+  for (let pag = 0; pag < 50; pag++){
+    const { data, error } = await armar().range(pag*1000, pag*1000 + 999);
+    if (error) return { data: todas.length ? todas : null, error };
+    todas.push(...(data||[]));
+    if (!data || data.length < 1000) break;
+  }
+  return { data: todas, error: null };
+}
+
 async function refreshAll(){
   try{
     const [lotes, inv, compras, ingresos, memoria, tasks, acts, coords, ciclos, plagas, fotos, cosechas, jornales] = await Promise.all([
       sb.from('lotes').select('*').eq('activo', true),
       sb.from('inventario').select('*').order('descripcion'),
-      sb.from('compras').select('*').order('fecha_compra', { ascending:false }).limit(400),
-      sb.from('ingresos').select('*').order('fecha', { ascending:false }).limit(300),
+      traerTodo(() => sb.from('compras').select('*').order('fecha_compra', { ascending:false }).order('id')),
+      traerTodo(() => sb.from('ingresos').select('*').order('fecha', { ascending:false }).order('id')),
       sb.from('memoria_agente').select('*').order('fecha', { ascending:false }).limit(20),
       sb.from('tareas').select('*, asignado:usuarios!asignado_a_id(codigo,nombre_corto), lote:lotes(codigo,cultivo,id)').order('creado_en', { ascending:false }),
-      sb.from('bitacora').select('*, responsable:usuarios!responsable_id(nombre_corto), lote:lotes(codigo,cultivo)').order('fecha', { ascending:false }).limit(300),
+      traerTodo(() => sb.from('bitacora').select('*, responsable:usuarios!responsable_id(nombre_corto), lote:lotes(codigo,cultivo)').order('fecha', { ascending:false }).order('id')),
       sb.from('coordenadas_lote').select('*').order('orden', { ascending:true }),
       sb.from('ciclos_cultivo').select('*').order('cultivo'),
       sb.from('plagas').select('*, lote:lotes(codigo,cultivo), registrado:usuarios!registrado_por(nombre_corto)').order('creado_en', { ascending:false }),
       sb.from('fotos').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).limit(300),
-      sb.from('cosechas').select('*, lote:lotes(codigo,cultivo)').order('fecha_recoleccion', { ascending:false }).limit(200),
-      sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).limit(200)
+      traerTodo(() => sb.from('cosechas').select('*, lote:lotes(codigo,cultivo)').order('fecha_recoleccion', { ascending:false }).order('id')),
+      traerTodo(() => sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).order('id'))
     ]);
     S.cache.lotes       = lotes.data    || [];
     S.cache.inventory   = inv.data      || [];
@@ -1408,7 +1525,21 @@ const TOOL_REGISTRAR_JORNAL = {
   }, required:['trabajador','dias','valor_dia'] }
 };
 
+const TOOL_CONSULTAR = {
+  name:'consultar_registros',
+  description:'Busca y calcula sobre TODOS los registros de la finca (no solo los recientes). Úsala SIEMPRE para preguntas de cuándo, cuánto, cuántas veces, última o primera vez, totales gastados, vendidos o cosechados. La app hace las cuentas: no sumes ni calcules tú.',
+  parameters:{ type:'OBJECT', properties:{
+    tabla:{type:'STRING', description:'labores (bitácora: fumigaciones, podas, riegos, abonadas, siembras…) | gastos | jornales | gasto_total (gastos + jornales) | costo_lote (todo lo que ha costado un lote) | ingresos | cosechas | plagas'},
+    operacion:{type:'STRING', description:'ultimo | primero | lista | total | contar'},
+    lote_codigo:{type:'STRING', description:'Código del lote si la pregunta es de un lote. Omitir si es de toda la finca.'},
+    palabras:{type:'ARRAY', items:{type:'STRING'}, description:'Palabras clave a buscar en el texto, ej ["fumigación"], ["urea"], ["Roberto"]. Omitir para todos.'},
+    desde:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO. Ej: "este mes" = primer día del mes.'},
+    hasta:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO'}
+  }, required:['tabla','operacion'] }
+};
+
 const ALL_TOOLS = [
+  TOOL_CONSULTAR,
   TOOL_SAVE_MEMORY, TOOL_CREATE_TASK, TOOL_EDIT_TASK, TOOL_DELETE_TASK,
   TOOL_ADD_GASTO, TOOL_ADD_INGRESO,
   TOOL_ADD_INVENTORY, TOOL_USE_INVENTORY, TOOL_LOG_ACTIVITY,
@@ -1575,6 +1706,7 @@ async function runGeminiEngine(history, userPrompt, mediaData){
 CALENDARIO (úsalo para "ayer", "antier", "el lunes", "la semana pasada"; NO calcules fechas de memoria):
 ${calendarioCtx()}
 REGLA DE FECHAS: si el usuario registra algo que pasó otro día, pasa SIEMPRE el parámetro "fecha" (YYYY-MM-DD) sacado de este calendario. "El lunes" sin más = el lunes pasado más reciente. Si no menciona día, omite "fecha" (queda hoy). Nunca uses fechas futuras para gastos, ingresos, labores, cosechas ni jornales.
+PREGUNTAS SOBRE LOS DATOS: los listados de abajo son solo lo más reciente. Para cualquier pregunta de cuándo, cuánto, cuántas veces o qué se hizo, usa SIEMPRE consultar_registros y responde con lo que devuelva, citando las fechas y cifras exactas. Nunca sumes ni calcules fechas tú.
 
 ═══════════════════════════════════
 PLAGAS Y ENFERMEDADES ACTIVAS
@@ -1708,8 +1840,8 @@ SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
 
   /* Loop agéntico: máx 2 vueltas para ahorrar tokens. */
   try{
-    let transcript = '';
-    for (let ronda = 0; ronda < 2; ronda++){
+    let transcript = '', ultConsulta = '';
+    for (let ronda = 0; ronda < 3; ronda++){
       const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(req) });
       if (!res.ok) return `⚠️ Error de red o cuota (${res.status}).`;
       const data = await res.json();
@@ -1723,7 +1855,7 @@ SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
       const textOut = parts.filter(p => p.text).map(p => p.text).join('');
 
       if (!calls.length){
-        return (transcript + (textOut ? '\n\n' + textOut : '')).trim() || '✅ Hecho.';
+        return (transcript + (textOut ? '\n\n' + textOut : '')).trim() || ultConsulta || '✅ Hecho.';
       }
 
       if (textOut) transcript += '\n\n' + textOut;
@@ -1733,13 +1865,14 @@ SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
         let result;
         try{ result = await executeToolCall(p.functionCall); }
         catch(e){ result = `⚠️ Error en "${p.functionCall.name}": ${e.message}`; }
-        if (result) transcript += (p.functionCall.name === 'buscar_en_internet') ? '\n\n🔎 Consulté en internet...' : '\n\n' + result;
+        if (p.functionCall.name === 'consultar_registros') ultConsulta = result;
+        else if (result) transcript += (p.functionCall.name === 'buscar_en_internet') ? '\n\n🔎 Consulté en internet...' : '\n\n' + result;
         responses.push({ functionResponse: { name: p.functionCall.name, response: { resultado: result || 'ok' } } });
       }
       req.contents.push({ role:'user', parts: responses });
       req.systemInstruction = { parts:[{ text: instruccionCorta }] };
     }
-    return transcript.trim() || '✅ Hecho.';
+    return transcript.trim() || ultConsulta || '✅ Hecho.';
   } catch(e){
     return '⚠️ Sin conexión con Gemini.';
   }
@@ -1753,6 +1886,8 @@ async function executeToolCall(call){
   const fTxt = (fAg && fAg !== hoyISO) ? ` · 📅 ${fmtFecha(fAg)}` : '';
 
   switch(name){
+    case 'consultar_registros':
+      return consultarRegistros(args);
     case 'save_memory':
       await HANDLERS.save_memory({ contenido: args.contenido });
       return `🧠 Aprendizaje guardado: "${args.contenido}"`;
@@ -2087,6 +2222,11 @@ Responde SOLO JSON:
   }
 };
 
+const INSTR_CONSULTA = `
+Si el usuario PREGUNTA por datos ya registrados (cuándo, cuánto, cuántas veces, última vez, total), NO respondas tú. Devuelve:
+{"accion":"consultar","tabla":"labores|gastos|jornales|gasto_total|costo_lote|ingresos|cosechas|plagas","operacion":"ultimo|primero|lista|total|contar","lote_codigo":"código o null","palabras":["..."],"desde":"YYYY-MM-DD o null","hasta":"YYYY-MM-DD o null"}
+Usa "responder" solo para preguntas que no son sobre registros.`;
+
 /* Llama a Gemini Flash en modo JSON con el contexto pequeño del dominio */
 async function parseAgente(dominio, texto, media){
   const spec = AGENTES[dominio]; if(!spec) return null;
@@ -2094,7 +2234,7 @@ async function parseAgente(dominio, texto, media){
   parts.push({text: texto || 'Analiza la imagen.'});
   const req = {
     contents:[{role:'user',parts}],
-    systemInstruction:{parts:[{text: spec.instruccion()}]},
+    systemInstruction:{parts:[{text: spec.instruccion() + (spec.soloConsulta ? '' : INSTR_CONSULTA)}]},
     generationConfig:{ responseMimeType:'application/json', maxOutputTokens:500, temperature:0.2 }
   };
   const res = await fetch(`${API_URL_FLASH}?key=${GEMINI_API_KEY}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});
@@ -2223,6 +2363,11 @@ async function flowAgenteSeccion(dominio, texto, media){
   try{ prop=await parseAgente(dominio, texto, media); }
   catch(e){ toast('Sin conexión con el agente'); return; }
   if(!prop){ toast('No entendí, dilo de otra forma'); return; }
+  if(prop.accion==='consultar'){
+    const r = consultarRegistros(prop);
+    await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(r).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:''});
+    return;
+  }
   if(prop.accion==='responder'){
     await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(prop.texto||'No tengo ese dato.'), okText:'Entendido', cancelText:''});
     return;
