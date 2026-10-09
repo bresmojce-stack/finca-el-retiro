@@ -1,12 +1,13 @@
 /*
  * Service Worker - Finca El Retiro
  * Estrategia:
- *  - App shell (HTML, iconos, fuentes, CDN): cache-first → carga instantánea, funciona offline
+ *  - Página (index.html): red primero (máx. 3 s) → siempre la versión nueva; sin señal usa la copia
+ *  - Iconos, fuentes, CDN: cache-first → carga instantánea, funciona offline
  *  - APIs (Supabase, Gemini, Open-Meteo): network-only → datos siempre frescos
  *  - Si la red falla y es una navegación, devuelve el index.html cacheado
  */
 
-const CACHE_VERSION = 'finca-retiro-v10-0';
+const CACHE_VERSION = 'finca-retiro-v11-0';
 const APP_SHELL = [
   './',
   './index.html',
@@ -74,6 +75,29 @@ self.addEventListener('fetch', (event) => {
   // App shell y CDNs: cache-first con actualización en segundo plano
   const isAppShell = url.origin === location.origin;
   const isCdn = CDN_HOSTS.some((h) => url.hostname.includes(h));
+
+  // La página (index.html) va primero a la red para que siempre llegue la versión nueva.
+  // Si no hay señal o la red tarda más de 3 s, se usa la copia guardada.
+  if (isAppShell && (req.mode === 'navigate' || url.pathname.endsWith('/') || url.pathname.endsWith('.html'))) {
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        const red = fetch(req).then((res) => {
+          if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+          return res;
+        });
+        red.catch(() => {});   // evita avisos si la red falla después de usar la copia
+        const espera = new Promise((resolve) => setTimeout(resolve, 3000, null));
+        try {
+          const res = await Promise.race([red, espera]);
+          if (res) return res;
+        } catch (e) {}
+        const guardada = (await cache.match(req)) || (await cache.match('./index.html')) || (await cache.match('./'));
+        if (guardada) return guardada;
+        try { return await red; } catch (e) { return new Response('', { status: 504, statusText: 'Sin conexión' }); }
+      })
+    );
+    return;
+  }
 
   if (isAppShell || isCdn) {
     event.respondWith(
