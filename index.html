@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v10.0</title>
+<title>Finca El Retiro v11.0</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -731,28 +731,7 @@ function _expandir(palabras){
   });
   return [...out];
 }
-function _fila(fecha, textos, loteId, desc, valor){
-  const dia = fechaDia(fecha);
-  return { dia, orden: tsOrden(fecha), texto: _normTxt(textos.filter(Boolean).join(' ')), lote_id: loteId||null, desc, valor };
-}
 const _num = v => parseFloat(v)||0;
-const FUENTES = {
-  labores:  { nombre:'labores de bitácora', unidad:null,
-    filas:() => (S.cache.activities||[]).map(b => _fila(b.fecha, [b.actividad, b.observaciones, b.insumo_aplicado, b.maquinaria_usada], b.lote_id, b.actividad + (b.responsable?.nombre_corto ? ` (${b.responsable.nombre_corto})` : ''), null)) },
-  gastos:   { nombre:'gastos', unidad:'$',
-    filas:() => (S.cache.compras||[]).filter(c => c.origen !== 'consumo').map(c => _fila(c.fecha_compra, [c.concepto, c.categoria, c.proveedor], c.lote_id, c.concepto, _num(c.valor_total))) },
-  jornales: { nombre:'jornales', unidad:'$',
-    filas:() => (S.cache.jornales||[]).map(j => _fila(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id, `Jornal ${j.trabajador}: ${j.dias} día(s)`, _num(j.valor_total))) },
-  ingresos: { nombre:'ingresos y ventas', unidad:'$', sinLote:true,
-    filas:() => (S.cache.ingresos||[]).map(i => _fila(i.fecha, [i.concepto], null, i.concepto, _num(i.valor_total))) },
-  cosechas: { nombre:'cosechas', unidad:'kg',
-    filas:() => (S.cache.cosechas||[]).map(c => _fila(c.fecha_recoleccion, [c.calidad, c.observaciones, 'cosecha'], c.lote_id, `${_num(c.volumen_kg).toLocaleString('es-CO')} kg (${c.calidad||'normal'})`, _num(c.volumen_kg))) },
-  plagas:   { nombre:'plagas y enfermedades', unidad:null,
-    filas:() => (S.cache.plagas||[]).map(p => _fila(p.fecha_deteccion || p.creado_en, [p.tipo, p.descripcion, p.producto_usado], p.lote_id, `${p.tipo}${p.severidad?' ('+p.severidad+')':''}${p.producto_usado?' · tratado con '+p.producto_usado+(p.fecha_control?' el '+fmtFecha(p.fecha_control):''):''}${p.activa?' · sigue activa':''}`, null)) },
-};
-FUENTES.gasto_total = { nombre:'gastos + jornales', unidad:'$', filas:() => [...FUENTES.gastos.filas(), ...FUENTES.jornales.filas()] };
-FUENTES.costo_lote  = { nombre:'costo (gastos, insumos usados y jornales)', unidad:'$',
-  filas:() => [...(S.cache.compras||[]).map(c => _fila(c.fecha_compra, [c.concepto, c.categoria], c.lote_id, c.concepto, _num(c.valor_total))), ...FUENTES.jornales.filas()] };
 
 function fmtFechaLarga(dia){
   if (!dia) return '?';
@@ -761,55 +740,6 @@ function fmtFechaLarga(dia){
   const rel = hace === 0 ? 'hoy' : hace === 1 ? 'ayer' : hace > 1 ? `hace ${hace} días` : `en ${-hace} días`;
   return `${txt} (${rel})`;
 }
-function _cifra(v, unidad){ return unidad === '$' ? fmtMoney(v) : unidad === 'kg' ? `${(Math.round(v*10)/10).toLocaleString('es-CO')} kg` : String(v); }
-
-function consultarRegistros(q){
-  q = q || {};
-  const clave = String(q.tabla||'').toLowerCase().trim();
-  const src = FUENTES[clave];
-  if (!src) return `No sé consultar "${q.tabla}". Opciones: ${Object.keys(FUENTES).join(', ')}.`;
-  const op = ['ultimo','primero','lista','total','contar'].includes(q.operacion) ? q.operacion : 'lista';
-
-  let lote = null;
-  if (q.lote_codigo && String(q.lote_codigo).toLowerCase() !== 'null'){
-    lote = resolverLote(q.lote_codigo);
-    if (!lote) return `No encontré el lote "${q.lote_codigo}".`;
-  }
-  const palabras = _expandir(q.palabras);
-  const desde = RX_DIA.test(q.desde||'') ? q.desde : null;
-  const hasta = RX_DIA.test(q.hasta||'') ? q.hasta : null;
-
-  let filas = src.filas();
-  if (lote && !src.sinLote) filas = filas.filter(f => f.lote_id === lote.id);
-  if (palabras.length) filas = filas.filter(f => palabras.some(w => f.texto.includes(w)));
-  if (desde) filas = filas.filter(f => f.dia >= desde);
-  if (hasta) filas = filas.filter(f => f.dia <= hasta);
-  filas.sort((a,b) => b.orden - a.orden);
-
-  const codLote = id => (S.cache.lotes||[]).find(l => l.id === id)?.codigo;
-  const linea = f => `• ${fmtFechaLarga(f.dia)}${codLote(f.lote_id) ? ' · ' + codLote(f.lote_id) : ''} · ${f.desc}${f.valor != null && src.unidad ? ' · ' + _cifra(f.valor, src.unidad) : ''}`;
-  const filtro = [src.nombre, lote ? 'lote ' + lote.codigo : '', (q.palabras && [].concat(q.palabras).length) ? `que mencionen "${[].concat(q.palabras).join(', ')}"` : '', desde ? 'desde ' + fmtFecha(desde) : '', hasta ? 'hasta ' + fmtFecha(hasta) : ''].filter(Boolean).join(' · ');
-
-  if (!filas.length) return `🔎 No encontré registros de ${filtro}.`;
-  const total = filas.reduce((a,f) => a + (f.valor||0), 0);
-  const rango = filas.length > 1 ? ` (entre ${fmtFecha(filas[filas.length-1].dia)} y ${fmtFecha(filas[0].dia)})` : '';
-
-  switch (op){
-    case 'ultimo':  return `🔎 Última vez (${filtro}):\n${linea(filas[0])}${filas.length > 1 ? `\nEn total hay ${filas.length} registros${rango}.` : ''}`;
-    case 'primero': return `🔎 Primera vez (${filtro}):\n${linea(filas[filas.length-1])}`;
-    case 'contar':  return `🔎 ${filas.length} registro(s) de ${filtro}${rango}.`;
-    case 'total':
-      if (!src.unidad) return `🔎 ${filas.length} registro(s) de ${filtro}${rango}.`;
-      return `🔎 Total de ${filtro}: ${_cifra(total, src.unidad)} en ${filas.length} registro(s)${rango}.`;
-    default: {
-      const top = filas.slice(0, 15).map(linea).join('\n');
-      const extra = filas.length > 15 ? `\n…y ${filas.length - 15} más.` : '';
-      const tot = src.unidad ? `\nTotal: ${_cifra(total, src.unidad)}.` : '';
-      return `🔎 ${filas.length} registro(s) de ${filtro}:\n${top}${extra}${tot}`;
-    }
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════════
    ESTADO GLOBAL
    ═══════════════════════════════════════════════════════════════ */
@@ -1397,198 +1327,6 @@ async function refreshAll(){
   } catch(e){ console.warn('refreshAll fallo:', e.message); }
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   MOTOR GEMINI
-   ═══════════════════════════════════════════════════════════════ */
-const TOOL_SAVE_MEMORY = {
-  name:'save_memory',
-  description:'Guarda un aprendizaje agronómico, dato técnico o preferencia operativa importante para la finca.',
-  parameters:{ type:'OBJECT', properties:{ contenido:{ type:'STRING', description:'Dato concreto a recordar. Ej: "Lote L1 requiere riego cada 3 días en verano"' } }, required:['contenido'] }
-};
-const TOOL_CREATE_TASK = {
-  name:'create_task',
-  description:'Programa una tarea futura con fecha límite y responsable.',
-  parameters:{ type:'OBJECT', properties:{
-    titulo:{type:'STRING', description:'Descripción clara de la tarea'},
-    asignado_a:{type:'STRING', description:'codigo del usuario, su nombre, o "todos"'},
-    fecha_limite:{type:'STRING', description:'YYYY-MM-DD. Si dicen "en 3 días" calcula la fecha exacta desde hoy.'},
-    lote_codigo:{type:'STRING', description:'código del lote si aplica, ej L01'}
-  }, required:['titulo'] }
-};
-const TOOL_EDIT_TASK = {
-  name:'edit_task',
-  description:'Edita el título, fecha límite o asignado de una tarea existente.',
-  parameters:{ type:'OBJECT', properties:{
-    titulo_actual:{type:'STRING', description:'Palabras clave del título actual para encontrarla'},
-    nuevo_titulo:{type:'STRING'},
-    nueva_fecha:{type:'STRING', description:'YYYY-MM-DD'},
-    nuevo_asignado:{type:'STRING'}
-  }, required:['titulo_actual'] }
-};
-const TOOL_DELETE_TASK = {
-  name:'delete_task_agent',
-  description:'Elimina una tarea por su título.',
-  parameters:{ type:'OBJECT', properties:{
-    titulo:{type:'STRING', description:'Palabras clave del título de la tarea a eliminar'}
-  }, required:['titulo'] }
-};
-const TOOL_ADD_GASTO = {
-  name:'add_gasto',
-  description:'Registra un gasto/egreso. Si es insumo físico, TAMBIÉN llama add_inventory.',
-  parameters:{ type:'OBJECT', properties:{
-    concepto:{type:'STRING'},
-    valor_total:{type:'NUMBER'},
-    categoria:{type:'STRING', description:'Nutrición, Agroquímicos, Insumos Consumibles, Equipos y Herramientas, EPP, jornales, servicios, otros'},
-    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['concepto','valor_total'] }
-};
-const TOOL_ADD_INGRESO = {
-  name:'add_ingreso',
-  description:'Registra un ingreso/venta.',
-  parameters:{ type:'OBJECT', properties:{ concepto:{type:'STRING'}, valor_total:{type:'NUMBER'}, fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'} }, required:['concepto','valor_total'] }
-};
-const TOOL_ADD_INVENTORY = {
-  name:'add_inventory',
-  description:'Agrega o repone un insumo físico a la bodega. Si ya existe el producto, suma la cantidad automáticamente. Si te dicen cuánto costó, pasa precio_total para calcular el costo unitario.',
-  parameters:{ type:'OBJECT', properties:{
-    descripcion:{type:'STRING', description:'Nombre comercial exacto'},
-    categoria:{type:'STRING', description:'Obligatorio: Nutrición, Agroquímicos, Insumos Consumibles, Equipos y Herramientas, EPP'},
-    subcategoria:{type:'STRING', description:'Ej: Foliares Líquidos, Herbicidas, Fungicidas Protectantes, etc.'},
-    detalles:{type:'STRING', description:'Especificaciones o Ingredientes activos. Ej: "Fósforo 20%, Nitrógeno" o "Metalaxil"'},
-    cantidad:{type:'NUMBER'},
-    unidad:{type:'STRING', description:'kilo, litro, bulto, galón, etc.'},
-    precio_total:{type:'NUMBER', description:'Precio total pagado en pesos por esta compra (para calcular costo unitario). Omitir si no lo dicen.'}
-  }, required:['descripcion','cantidad','unidad','categoria'] }
-};
-const TOOL_USE_INVENTORY = {
-  name:'use_inventory',
-  description:'Descuenta cantidad usada de un insumo en la bodega. Si indicas lote_codigo, el costo del consumo se asigna automáticamente a ese lote (NO llames add_gasto por esto).',
-  parameters:{ type:'OBJECT', properties:{
-    descripcion:{type:'STRING', description:'nombre o palabras clave del insumo'},
-    cantidad:{type:'NUMBER'},
-    lote_codigo:{type:'STRING', description:'Código del lote donde se usó, ej L01. Omitir si fue uso general de finca.'}
-  }, required:['descripcion','cantidad'] }
-};
-const TOOL_LOG_ACTIVITY = {
-  name:'log_activity',
-  description:'Anota una labor realizada, novedad o evento en la bitácora de la finca.',
-  parameters:{ type:'OBJECT', properties:{
-    actividad:{type:'STRING', description:'Descripción completa de la labor. Incluye insumos usados, dosis, condiciones si aplica.'},
-    lote_codigo:{type:'STRING', description:'Código del lote. Omitir si es labor general de finca.'},
-    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['actividad'] }
-};
-const TOOL_COMPLETE_TASK = {
-  name:'complete_task',
-  description:'Marca como completada una tarea pendiente.',
-  parameters:{ type:'OBJECT', properties:{ titulo:{type:'STRING', description:'Palabras clave del título de la tarea'} }, required:['titulo'] }
-};
-const TOOL_CREATE_LOTE = {
-  name:'create_lote',
-  description:'Crea un lote/parcela nuevo en la finca.',
-  parameters:{ type:'OBJECT', properties:{
-    codigo:{type:'STRING', description:'Código corto, ej: L01, INV-A'},
-    cultivo:{type:'STRING'},
-    variedad:{type:'STRING', description:'Variedad o tipo, opcional'}
-  }, required:['codigo','cultivo'] }
-};
-const TOOL_UPDATE_LOTE_ESTADO = {
-  name:'update_lote_estado',
-  description:'Actualiza el estado de un lote (planificación, siembra, vegetativo, producción, cosecha, descanso).',
-  parameters:{ type:'OBJECT', properties:{
-    lote_codigo:{type:'STRING'},
-    estado:{type:'STRING', description:'planificación | siembra | vegetativo | producción | cosecha | descanso'}
-  }, required:['lote_codigo','estado'] }
-};
-const TOOL_REGISTRAR_PLAGA = {
-  name:'registrar_plaga',
-  description:'Registra una plaga, enfermedad o problema fitosanitario detectado en un lote.',
-  parameters:{ type:'OBJECT', properties:{
-    lote_codigo:{type:'STRING', description:'Código del lote afectado'},
-    tipo:{type:'STRING', description:'Nombre de la plaga o enfermedad. Ej: Áfidos, Mildiu, Gusano trozador, Botrytis'},
-    descripcion:{type:'STRING', description:'Descripción de síntomas, parte afectada, extensión del daño'},
-    severidad:{type:'STRING', description:'leve | moderada | severa'},
-    fecha_deteccion:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['tipo','lote_codigo'] }
-};
-const TOOL_CONTROLAR_PLAGA = {
-  name:'controlar_plaga',
-  description:'Registra el control aplicado a una plaga activa.',
-  parameters:{ type:'OBJECT', properties:{
-    tipo_plaga:{type:'STRING', description:'Palabras clave del tipo de plaga para encontrarla'},
-    lote_codigo:{type:'STRING'},
-    producto:{type:'STRING', description:'Producto aplicado'},
-    dosis:{type:'STRING', description:'Dosis usada'},
-    resultado:{type:'STRING', description:'Resultado observado del control'},
-    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['tipo_plaga'] }
-};
-
-const TOOL_BUSCAR_WEB = {
-  name:'buscar_en_internet',
-  description:'Busca información técnica actualizada en internet (Google): compatibilidad de mezclas, dosis, fichas de productos, manejo de plagas, precios de referencia. Úsala cuando la información no esté en tu contexto o no estés seguro.',
-  parameters:{ type:'OBJECT', properties:{ consulta:{type:'STRING', description:'Búsqueda específica. Ej: "compatibilidad mezcla clorpirifos con cal agrícola"'} }, required:['consulta'] }
-};
-const TOOL_REGISTRAR_COSECHA = {
-  name:'registrar_cosecha',
-  description:'Registra kilos cosechados en un lote.',
-  parameters:{ type:'OBJECT', properties:{
-    lote_codigo:{type:'STRING'},
-    kilos:{type:'NUMBER'},
-    calidad:{type:'STRING', description:'primera | segunda | normal'},
-    observaciones:{type:'STRING'},
-    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['lote_codigo','kilos'] }
-};
-const TOOL_REGISTRAR_JORNAL = {
-  name:'registrar_jornal',
-  description:'Registra mano de obra (jornales). El valor se registra como gasto y se suma al costo del lote si se indica.',
-  parameters:{ type:'OBJECT', properties:{
-    trabajador:{type:'STRING'},
-    dias:{type:'NUMBER', description:'días trabajados'},
-    valor_dia:{type:'NUMBER', description:'pesos pagados por día'},
-    lote_codigo:{type:'STRING'},
-    nota:{type:'STRING'},
-    fecha:{type:'STRING', description:'YYYY-MM-DD del día en que pasó, tomado del CALENDARIO. Omitir si fue hoy.'}
-  }, required:['trabajador','dias','valor_dia'] }
-};
-
-const TOOL_CONSULTAR = {
-  name:'consultar_registros',
-  description:'Busca y calcula sobre TODOS los registros de la finca (no solo los recientes). Úsala SIEMPRE para preguntas de cuándo, cuánto, cuántas veces, última o primera vez, totales gastados, vendidos o cosechados. La app hace las cuentas: no sumes ni calcules tú.',
-  parameters:{ type:'OBJECT', properties:{
-    tabla:{type:'STRING', description:'labores (bitácora: fumigaciones, podas, riegos, abonadas, siembras…) | gastos | jornales | gasto_total (gastos + jornales) | costo_lote (todo lo que ha costado un lote) | ingresos | cosechas | plagas'},
-    operacion:{type:'STRING', description:'ultimo | primero | lista | total | contar'},
-    lote_codigo:{type:'STRING', description:'Código del lote si la pregunta es de un lote. Omitir si es de toda la finca.'},
-    palabras:{type:'ARRAY', items:{type:'STRING'}, description:'Palabras clave a buscar en el texto, ej ["fumigación"], ["urea"], ["Roberto"]. Omitir para todos.'},
-    desde:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO. Ej: "este mes" = primer día del mes.'},
-    hasta:{type:'STRING', description:'YYYY-MM-DD tomado del CALENDARIO'}
-  }, required:['tabla','operacion'] }
-};
-
-const ALL_TOOLS = [
-  TOOL_CONSULTAR,
-  TOOL_SAVE_MEMORY, TOOL_CREATE_TASK, TOOL_EDIT_TASK, TOOL_DELETE_TASK,
-  TOOL_ADD_GASTO, TOOL_ADD_INGRESO,
-  TOOL_ADD_INVENTORY, TOOL_USE_INVENTORY, TOOL_LOG_ACTIVITY,
-  TOOL_COMPLETE_TASK, TOOL_CREATE_LOTE, TOOL_UPDATE_LOTE_ESTADO,
-  TOOL_REGISTRAR_PLAGA, TOOL_CONTROLAR_PLAGA,
-  TOOL_BUSCAR_WEB, TOOL_REGISTRAR_COSECHA, TOOL_REGISTRAR_JORNAL
-];
-
-/* Búsqueda web en vivo para el agente (llamada aparte: Gemini no permite
-   mezclar google_search con las herramientas de la finca en un mismo request) */
-async function webSearchGemini(consulta){
-  try{
-    const reqW = { contents:[{ role:'user', parts:[{ text:`Busca en internet y responde en español de forma concisa (máximo 220 palabras), con datos concretos y confiables aplicables a agricultura en Colombia: ${consulta}` }] }], tools:[{ google_search:{} }] };
-    const rq = await llamarGemini(reqW);
-    if (!rq.ok) return 'No se pudo buscar (error de red o cuota).';
-    const data = rq.data;
-    const txt = (data.candidates?.[0]?.content?.parts || []).filter(p=>p.text).map(p=>p.text).join('').trim();
-    return txt || 'La búsqueda no arrojó resultados.';
-  } catch(e){ return 'No se pudo buscar: ' + e.message; }
-}
-
 /* Respuestas locales: contesta consultas comunes SIN gastar tokens del agente.
    Devuelve un texto si la puede responder sola, o null si hay que usar la IA. */
 function respuestaLocal(textoRaw){
@@ -1598,7 +1336,7 @@ function respuestaLocal(textoRaw){
   const hoyISO = fechaLocalISO();
   // Saldo / balance
   if (/(saldo|balance|cu[aá]nto.*(tengo|hay).*(plata|caja|dinero)|c[oó]mo.*(va|esta).*(plata|finanza))/.test(t)){
-    const eg = (S.cache.compras||[]).filter(c=>c.origen!=='consumo').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
+    const eg = egresosTotales();
     const in_ = (S.cache.ingresos||[]).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
     return `💰 Balance: ${fmt(in_-eg)}\nIngresos: ${fmt(in_)} · Egresos: ${fmt(eg)}`;
   }
@@ -1622,6 +1360,11 @@ function respuestaLocal(textoRaw){
     const w = Weather.contextForAgent();
     if (w) return '🌦️' + w.replace(/^\s*CLIMA ACTUAL/, ' Clima').replace(/\n- /g, '\n• ');
   }
+  // ¿Hay / tenemos un insumo?
+  const mh = tn.match(/^(hay|tenemos|tengo|queda|quedan|nos queda)\s+(?:de\s+)?(.+?)\s*$/);
+  if (mh && !/^(que|q|algo|alguna?|tiempo|plata|dinero|tareas?|pendientes?)\b/.test(mh[2])){ const r = buscarDifuso(mh[2].replace(/^(el|la|los|las|algo de|un poco de)\s+/, ''), S.cache.inventory||[], 'descripcion'), it = r.exacto || r.sugerido;
+    if (it) return (parseFloat(it.cantidad_actual)||0) > 0 ? `📦 Sí, de ${it.descripcion} quedan ${it.cantidad_actual} ${it.unidad_medida||''}.` : `📦 No, ${it.descripcion} está agotado.`;
+    if (mh[2].split(' ').length <= 3 && !RX_LABOR.test(mh[2])) return `📦 No encontré «${mh[2]}» en la bodega.`; }
   // Cuánto queda de un insumo
   let m = t.match(/cu[aá]nt[oa]s?\s+(?:hay|queda|tengo|me queda)\s+(?:de\s+)?(.+)/);
   if (m){
@@ -1647,391 +1390,6 @@ async function comprimirParaAgente(media){
     img.onerror = () => resolve(media);
     img.src = 'data:' + media.type + ';base64,' + media.b64;
   });
-}
-
-async function runGeminiEngine(history, userPrompt, mediaData){
-  let contents = history.slice(-6).map(m => ({ role: m.role==='assistant'?'model':m.role, parts: [{ text: m.content }] }));
-  const newParts = [{ text: userPrompt }];
-  if (mediaData){
-    let md = mediaData;
-    try{ md = await comprimirParaAgente(mediaData); }catch(e){}
-    newParts.unshift({ inlineData: { mimeType: md.type, data: md.b64 } });
-  }
-  contents.push({ role:'user', parts:newParts });
-
-  const req = { contents };
-
-  const hoy = new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric', timeZone: TZ_FINCA });
-  const hoyISO = fechaLocalISO();
-
-  // Costo acumulado por lote (compras directas + consumo de insumos + jornales)
-  const costoLotes = {};
-  (S.cache.compras||[]).forEach(c => { if (c.lote_id) costoLotes[c.lote_id] = (costoLotes[c.lote_id]||0) + (parseFloat(c.valor_total)||0); });
-  (S.cache.jornales||[]).forEach(j => { if (j.lote_id) costoLotes[j.lote_id] = (costoLotes[j.lote_id]||0) + (parseFloat(j.valor_total)||0); });
-  const cosechadoLotes = {};
-  (S.cache.cosechas||[]).forEach(c => { if (c.lote_id) cosechadoLotes[c.lote_id] = (cosechadoLotes[c.lote_id]||0) + (parseFloat(c.volumen_kg)||0); });
-
-  // Lotes con detalle completo
-  const lotesCtx = (S.cache.lotes || []).map(l => {
-    const coords = (S.cache.coordenadas||[]).filter(c => c.lote_id === l.id);
-    const dims = coords.length >= 3 ? (() => {
-      const pts = coords.map(c=>({lat:c.latitud,lng:c.longitud}));
-      return MapEngine.calcDims(pts);
-    })() : null;
-    return `- ${l.codigo}: ${l.cultivo}${l.variedad?' ('+l.variedad+')':''} | Estado: ${l.estado} | Ambiente: ${l.ambiente||'abierto'}${dims?` | Área: ${MapEngine.fmtArea(dims.area)} | Perímetro: ${MapEngine.fmtDist(dims.perimetro)}`:''}${costoLotes[l.id]?` | Costo acumulado: $${costoLotes[l.id].toLocaleString('es-CO')}`:''}${cosechadoLotes[l.id]?` | Cosechado: ${cosechadoLotes[l.id]} kg${costoLotes[l.id]?` (costo/kg: $${Math.round(costoLotes[l.id]/cosechadoLotes[l.id]).toLocaleString('es-CO')})`:''}`:''}`;
-  }).join('\n') || 'ninguno aún';
-
-  const inventoryList = (S.cache.inventory || []).map(i => {
-    const cu = parseFloat(i.costo_unitario)||0;
-    const fr = i.franja_toxicologica ? `, Franja: ${i.franja_toxicologica}` : '';
-    return `- ${i.descripcion}: ${i.cantidad_actual} ${i.unidad_medida||''} (de ${i.total_ingresado||i.cantidad_actual}, Cat: ${subcatActual(i.subcategoria)||i.categoria||'otro'}${cu>0?`, $${Math.round(cu).toLocaleString('es-CO')}/${i.unidad_medida||'u'}`:''}${fr})`;
-  }).join('\n') || 'bodega vacía';
-
-  const usersList = (S.cache.users || []).map(u => `${u.nombre_corto} (código: ${u.codigo})`).join(', ');
-  const conocimientos = S.cache.memoria.slice(0,10).map(m => `- ${m.contenido}`).join('\n') || '(sin aprendizajes guardados)';
-  const weatherCtx = Weather.contextForAgent();
-
-  // Bitácora completa con fecha ISO para cálculos de tiempo
-  const bitacoraCtx = (S.cache.activities || []).slice(0,15).map(b =>
-    `- [${fechaDia(b.fecha)||'?'}] ${b.lote?.codigo||'Finca general'}: ${b.actividad} (registrado por ${b.responsable?.nombre_corto||'—'})`
-  ).join('\n') || '(sin registros en bitácora)';
-
-  // Tareas: pendientes + vencidas + próximas
-  const tareasPend = (S.cache.tasks||[]).filter(t=>t.estado==='pendiente');
-  const tareasVenc = tareasPend.filter(t => t.fecha_limite && t.fecha_limite < hoyISO);
-  const tareasHoy  = tareasPend.filter(t => t.fecha_limite === hoyISO);
-  const tareasProx = tareasPend.filter(t => t.fecha_limite && t.fecha_limite > hoyISO);
-  const tareasSinF = tareasPend.filter(t => !t.fecha_limite);
-  const tareasDone = (S.cache.tasks||[]).filter(t=>t.estado==='completada').slice(0,6);
-
-  const fmtTask = t => `  • [ID:${t.id}] "${t.titulo}" | Lote: ${t.lote?.codigo||'Finca'} | Fecha: ${t.fecha_limite||'sin fecha'} | Asignado: ${t.asignado?.nombre_corto||'todos'}`;
-  const tareasCtx = [
-    tareasVenc.length ? `VENCIDAS (${tareasVenc.length}):\n${tareasVenc.map(fmtTask).join('\n')}` : '',
-    tareasHoy.length  ? `PARA HOY (${tareasHoy.length}):\n${tareasHoy.map(fmtTask).join('\n')}` : '',
-    tareasProx.length ? `PRÓXIMAS:\n${tareasProx.map(fmtTask).join('\n')}` : '',
-    tareasSinF.length ? `SIN FECHA:\n${tareasSinF.map(fmtTask).join('\n')}` : '',
-    tareasDone.length ? `COMPLETADAS RECIENTES:\n${tareasDone.map(t=>`  ✓ "${t.titulo}"`).join('\n')}` : ''
-  ].filter(Boolean).join('\n\n') || '(sin tareas)';
-
-  // Finanzas resumidas (los registros origen='consumo' son costo interno por lote, no egresos reales)
-  const totalEgresos = egresosTotales();
-  const totalIngresos = (S.cache.ingresos||[]).reduce((s,i)=>s+(parseFloat(i.valor_total)||0),0);
-  const gastosCtx = (S.cache.compras||[]).filter(c=>c.origen!=='consumo').slice(0,8).map(c=>
-    `- [${fechaDia(c.fecha_compra)||'?'}] ${c.concepto}: $${(parseFloat(c.valor_total)||0).toLocaleString('es-CO')} (${c.categoria||'general'}${c.origen==='consumo'?', consumo interno por lote':''})`
-  ).join('\n') || '(sin gastos)';
-  const ingresosCtx = (S.cache.ingresos||[]).slice(0,8).map(i=>
-    `- [${fechaDia(i.fecha)||'?'}] ${i.concepto}: $${(parseFloat(i.valor_total)||0).toLocaleString('es-CO')}`
-  ).join('\n') || '(sin ingresos)';
-
-  // Ciclos disponibles
-  const ciclosCtx = (S.cache.ciclos||[]).map(c => `- ${c.cultivo}${c.variedad?' ('+c.variedad+')':''}: ${c.duracion_dias} días`).join('\n') || '(sin ciclos definidos)';
-
-  // Cosechas y jornales recientes
-  const cosechasCtx = (S.cache.cosechas||[]).slice(0,8).map(c =>
-    `- [${fechaDia(c.fecha_recoleccion)||'?'}] ${c.lote?.codigo||'?'}: ${c.volumen_kg} kg (${c.calidad||'normal'})${c.observaciones?' · '+c.observaciones:''}`
-  ).join('\n') || '(sin cosechas registradas)';
-  const jornalesCtx = (S.cache.jornales||[]).slice(0,8).map(j =>
-    `- [${fechaDia(j.fecha)||'?'}] ${j.trabajador}: ${j.dias} día(s) x $${(parseFloat(j.valor_dia)||0).toLocaleString('es-CO')} = $${(parseFloat(j.valor_total)||0).toLocaleString('es-CO')}${j.lote_id?' · Lote '+(S.cache.lotes.find(l=>l.id===j.lote_id)?.codigo||'?'):''}`
-  ).join('\n') || '(sin jornales registrados)';
-
-  // Plagas activas
-  const plagasActivas = (S.cache.plagas||[]).filter(p=>p.activa);
-  const plagasCtx = plagasActivas.length ? plagasActivas.map(p=>
-    `- [${fechaDia(p.fecha_deteccion)||'?'}] ${p.lote?.codigo||'Finca'}: ${p.tipo} | Severidad: ${p.severidad} | ${p.descripcion||''}${p.producto_usado?' | Tratado con: '+p.producto_usado:' | Sin tratamiento aún'}`
-  ).join('\n') : '(sin plagas activas)';
-
-  const systemInstruction = `Eres el Agente Operativo de Finca El Retiro, Pradera, Valle del Cauca. Eres el administrador digital de la finca: gestionas labores, tiempos, insumos, finanzas y reportes. Eres práctico, proactivo y hablas como un mayordomo de finca experimentado.
-
-📅 HOY ES: ${hoy} (${hoyISO})
-CALENDARIO (úsalo para "ayer", "antier", "el lunes", "la semana pasada"; NO calcules fechas de memoria):
-${calendarioCtx()}
-REGLA DE FECHAS: si el usuario registra algo que pasó otro día, pasa SIEMPRE el parámetro "fecha" (YYYY-MM-DD) sacado de este calendario. "El lunes" sin más = el lunes pasado más reciente. Si no menciona día, omite "fecha" (queda hoy). Nunca uses fechas futuras para gastos, ingresos, labores, cosechas ni jornales.
-PREGUNTAS SOBRE LOS DATOS: los listados de abajo son solo lo más reciente. Para cualquier pregunta de cuándo, cuánto, cuántas veces o qué se hizo, usa SIEMPRE consultar_registros y responde con lo que devuelva, citando las fechas y cifras exactas. Nunca sumes ni calcules fechas tú.
-
-═══════════════════════════════════
-PLAGAS Y ENFERMEDADES ACTIVAS
-═══════════════════════════════════
-${plagasCtx}
-
-═══════════════════════════════════
-COSECHAS RECIENTES
-═══════════════════════════════════
-${cosechasCtx}
-
-═══════════════════════════════════
-JORNALES RECIENTES (mano de obra)
-═══════════════════════════════════
-${jornalesCtx}
-
-═══════════════════════════════════
-CICLOS DE CULTIVO REGISTRADOS
-═══════════════════════════════════
-${ciclosCtx}
-
-═══════════════════════════════════
-LOTES Y CULTIVOS
-═══════════════════════════════════
-${lotesCtx}
-
-═══════════════════════════════════
-USUARIOS / TRABAJADORES
-═══════════════════════════════════
-${usersList}
-
-═══════════════════════════════════
-BODEGA ACTUAL (${(S.cache.inventory||[]).length} productos)
-═══════════════════════════════════
-${inventoryList}
-
-═══════════════════════════════════
-TAREAS
-═══════════════════════════════════
-${tareasCtx}
-
-═══════════════════════════════════
-BITÁCORA DE LABORES (más recientes primero)
-═══════════════════════════════════
-${bitacoraCtx}
-
-═══════════════════════════════════
-FINANZAS — Balance: $${(totalIngresos-totalEgresos).toLocaleString('es-CO')}
-═══════════════════════════════════
-INGRESOS (total: $${totalIngresos.toLocaleString('es-CO')}):
-${ingresosCtx}
-
-GASTOS (total: $${totalEgresos.toLocaleString('es-CO')}):
-${gastosCtx}
-
-═══════════════════════════════════
-CONOCIMIENTOS GUARDADOS
-═══════════════════════════════════
-${conocimientos}
-
-═══════════════════════════════════
-REGLAS DE ACCIÓN
-═══════════════════════════════════
-REGISTRO:
-- "fumigué / apliqué / podé / cosechamos X en lote Y" → log_activity + use_inventory con lote_codigo si hay insumo de por medio
-- "compré X cantidad de Y por Z pesos" → add_inventory con precio_total=Z, y TAMBIÉN add_gasto por la compra
-- "vendí / ingresó X pesos" → add_ingreso
-- "usé / eché / apliqué X de Y en el lote Z" → use_inventory con lote_codigo=Z + log_activity. El costo se asigna SOLO al lote automáticamente. NUNCA llames add_gasto por consumir un insumo (eso duplicaría la plata).
-- "¿cuánto ha costado el lote X?" → lee el Costo acumulado en LOTES Y CULTIVOS arriba
-
-TAREAS Y TIEMPOS:
-- "programa / recuerda hacer X en Y días / el día Z" → create_task con fecha calculada desde HOY
-- "cambia / mueve la tarea X para Y" → edit_task
-- "cancela / borra la tarea X" → delete_task_agent
-- "ya hice / terminé X" → complete_task + log_activity describiendo lo que se hizo
-- "¿qué hay pendiente?" → lee las TAREAS de arriba y responde con resumen claro
-- "¿qué se hizo en el lote X?" → lee la BITÁCORA y responde con fechas reales
-- "¿cuánto tiempo lleva X sin Y?" → calcula días desde la BITÁCORA usando HOY como referencia
-- "cambia el estado del lote X a Y" → update_lote_estado
-
-CONSULTAS (NO uses herramientas, solo lee los datos de arriba):
-- ¿Cuándo se fumigó X? → busca en bitácora
-- ¿Cuánto hay de X en bodega? → busca en bodega
-- ¿Qué tareas hay para mañana? → filtra tareas por fecha
-- ¿Cuánto hemos gastado? → lee finanzas
-- ¿Qué se hizo esta semana? → filtra bitácora por fechas recientes
-
-INTELIGENCIA:
-- Si detectas que un insumo está bajo (< 15% del total), avisa proactivamente
-- Si hay tareas vencidas, mencionarlas aunque no te pregunten
-- Si llevan más de 15 días sin fumigar un lote activo, sugerirlo
-- Si registran una labor, verifica si hay tarea relacionada y ofrece completarla
-- Guarda en memoria cualquier dato técnico relevante (ciclos de cultivo, dosis, intervalos)
-
-PLAGAS Y ENFERMEDADES:
-- "detecté / apareció / hay X en lote Y" → registrar_plaga
-- "apliqué / traté X con Y" → controlar_plaga + use_inventory + log_activity
-- "¿qué plagas hay activas?" → lee PLAGAS ACTIVAS arriba y responde
-- "se controló / ya no hay plaga" → controlar_plaga con resultado de erradicación
-
-COSECHAS Y JORNALES:
-- "cosechamos X kilos en lote Y" → registrar_cosecha + log_activity
-- "pagué N jornales a X a $V el día" o "X trabajó N días en el lote Y" → registrar_jornal (se suma al costo del lote automáticamente)
-- "¿cuánto produjo el lote X? ¿a cuánto salió el kilo?" → usa Cosechado y costo/kg en LOTES Y CULTIVOS
-
-INVESTIGACIÓN EN INTERNET (PREGUNTAR PRIMERO):
-- Primero responde con lo que sabes de la finca (datos de arriba) o tu conocimiento general.
-- Si para responder bien necesitarías buscar en internet (dosis exactas, compatibilidades, precios de referencia, info de un producto que no conoces), NO uses la herramienta de una. Primero PREGUNTA: "¿Quieres que busque en internet o te respondo con lo que hay en la finca?".
-- Solo usa buscar_en_internet si en el mensaje el usuario ya te pidió o autorizó buscar en internet ("sí, busca", "busca en internet", "averígualo").
-- Cuando busques, al final ofrece guardar lo útil en memoria.
-
-COMPATIBILIDAD Y SEGURIDAD (MUY IMPORTANTE):
-- Antes de avalar mezclar dos productos: revisa sus fichas técnicas en BODEGA y, si no es claro, usa buscar_en_internet.
-- Advierte SIEMPRE incompatibilidades: ej. cal y enmiendas alcalinas anulan fertilizantes amoniacales y degradan organofosforados; aguas/productos alcalinos degradan muchos insecticidas; mezclas cobre+azufre pueden ser fitotóxicas en ciertos cultivos.
-- Si hay riesgo de fitotoxicidad o intoxicación dilo SIN rodeos y recomienda verificar la etiqueta. NUNCA inventes compatibilidades.
-
-FOTOS Y DIAGNÓSTICO:
-- Si recibes foto de una planta enferma: describe síntomas, da el diagnóstico más probable con severidad, recomienda manejo priorizando lo que hay en BODEGA, y ofrece registrar_plaga.
-- Las fotos enviadas quedan guardadas en la galería de la finca.
-
-Si no está en los datos de arriba y no lo puedes buscar, dilo claramente.
-SIEMPRE ejecuta la herramienta antes de confirmar con palabras.` + weatherCtx;
-
-  req.tools = [{ functionDeclarations: ALL_TOOLS }];
-  req.systemInstruction = { parts:[{ text: systemInstruction }] };
-  req.generationConfig = { maxOutputTokens: 800, temperature: 0.6 };
-
-  /* Instrucción corta para las vueltas de seguimiento: el contexto pesado
-     solo se manda en la primera llamada, no se repite en cada acción. */
-  const instruccionCorta = `Eres el Agente Operativo de Finca El Retiro. Hoy es ${hoyISO}. Calendario:\n${calendarioCtx()}\n Ya ejecutaste herramientas; usa sus resultados para responderle al usuario de forma breve y clara, o ejecuta otra herramienta si hace falta.`;
-
-  /* Loop agéntico: máx 2 vueltas para ahorrar tokens. */
-  try{
-    let transcript = '', ultConsulta = '';
-    for (let ronda = 0; ronda < 3; ronda++){
-      const rq = await llamarGemini(req);
-      if (!rq.ok) return `⚠️ Error de red o cuota (${rq.status || 'sin red'}).`;
-      const data = rq.data;
-      if (data.promptFeedback?.blockReason) return `⚠️ Bloqueado: ${data.promptFeedback.blockReason}`;
-      const cand = data.candidates?.[0];
-      if (cand?.finishReason === 'SAFETY') return '⚠️ Bloqueado por seguridad.';
-      if (!cand) return '⚠️ Sin respuesta de Gemini.';
-
-      const parts = cand.content?.parts || [];
-      const calls = parts.filter(p => p.functionCall);
-      const textOut = parts.filter(p => p.text).map(p => p.text).join('');
-
-      if (!calls.length){
-        return (transcript + (textOut ? '\n\n' + textOut : '')).trim() || ultConsulta || '✅ Hecho.';
-      }
-
-      if (textOut) transcript += '\n\n' + textOut;
-      req.contents.push(cand.content);
-      const responses = [];
-      for (const p of calls){
-        let result;
-        try{ result = await executeToolCall(p.functionCall); }
-        catch(e){ result = `⚠️ Error en "${p.functionCall.name}": ${e.message}`; }
-        if (p.functionCall.name === 'consultar_registros') ultConsulta = result;
-        else if (result) transcript += (p.functionCall.name === 'buscar_en_internet') ? '\n\n🔎 Consulté en internet...' : '\n\n' + result;
-        responses.push({ functionResponse: { name: p.functionCall.name, response: { resultado: result || 'ok' } } });
-      }
-      req.contents.push({ role:'user', parts: responses });
-      req.systemInstruction = { parts:[{ text: instruccionCorta }] };
-    }
-    return transcript.trim() || ultConsulta || '✅ Hecho.';
-  } catch(e){
-    return '⚠️ Sin conexión con Gemini.';
-  }
-}
-
-async function executeToolCall(call){
-  const args = call.args || {}, name = call.name;
-  const hoyISO = fechaLocalISO();
-  const moneyFmt = (n) => '$' + (parseFloat(n)||0).toLocaleString('es-CO', {maximumFractionDigits:0});
-  const fAg = fechaAgente(args.fecha);                 // null = hoy
-  const fTxt = (fAg && fAg !== hoyISO) ? ` · 📅 ${fmtFecha(fAg)}` : '';
-
-  switch(name){
-    case 'consultar_registros':
-      return consultarRegistros(args);
-    case 'save_memory':
-      await HANDLERS.save_memory({ contenido: args.contenido });
-      return `🧠 Aprendizaje guardado: "${args.contenido}"`;
-    case 'create_task':
-      let lote_id = null;
-      if (args.lote_codigo){
-        const l = S.cache.lotes.find(x => x.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
-        lote_id = l?.id || null;
-      }
-      const r = await HANDLERS.create_task({ titulo: args.titulo, asignado_a: args.asignado_a || 'todos', fecha_limite: args.fecha_limite || null, lote_id });
-      return r.success ? `📋 Tarea programada: "${args.titulo}"` : `⚠️ Error tarea: ${r.msg}`;
-    case 'add_gasto':
-      await HANDLERS.add_gasto({ concepto: args.concepto, categoria: args.categoria || 'general', valor_total: args.valor_total, lote_id: null, fecha: fAg });
-      return `💸 Gasto registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}${fTxt}`;
-    case 'add_ingreso':
-      await HANDLERS.add_ingreso({ concepto: args.concepto, valor_total: args.valor_total, fecha: fAg });
-      return `💰 Ingreso registrado: ${args.concepto} — ${moneyFmt(args.valor_total)}${fTxt}`;
-    case 'add_inventory':
-      const ai = await HANDLERS.add_inventory({
-        descripcion: args.descripcion, categoria: args.categoria || 'otro',
-        subcategoria: args.subcategoria || '', detalles: args.detalles || '',
-        cantidad: args.cantidad, unidad: args.unidad, precio_total: parseFloat(args.precio_total)||0
-      });
-      const costoInfo = parseFloat(args.precio_total)>0 ? ` · ${moneyFmt(args.precio_total)}` : '';
-      return ai.success ? `📦 Bodega: +${args.cantidad} ${args.unidad} de ${args.descripcion}${costoInfo}${ai.isNew?' · 🔎 Investigando el producto en internet...':''}` : `⚠️ Error bodega: ${ai.msg}`;
-    case 'use_inventory':
-      const q = (args.descripcion || '').toLowerCase().trim();
-      const item = S.cache.inventory.find(i => i.descripcion?.toLowerCase().includes(q) || q.includes(i.descripcion?.toLowerCase() || ''));
-      if (!item) return `⚠️ No encontré "${args.descripcion}" en bodega.`;
-      let loteUso = null;
-      if (args.lote_codigo) loteUso = S.cache.lotes.find(l => l.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
-      const ui = await consumirInsumo({ itemId: item.id, cantidad: args.cantidad, loteId: loteUso?.id || null });
-      if(!ui.success) return `⚠️ Error: ${ui.msg}`;
-      let outUso = `📦 Bodega: -${ui.usado} ${ui.unidad} de ${ui.descripcion} (quedan ${ui.restante})`;
-      if (ui.costo > 0) outUso += ` · costo ${moneyFmt(ui.costo)}${loteUso ? ' asignado a ' + loteUso.codigo : ''}`;
-      if (ui.capped) outUso += ` ⚠️ Pediste ${args.cantidad} pero solo había ${ui.usado} disponible`;
-      return outUso;
-    case 'log_activity':
-      let lid = null, cod = null;
-      if (args.lote_codigo){
-        const l = S.cache.lotes.find(x => x.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
-        lid = l?.id || null; cod = l?.codigo || null;
-      }
-      await HANDLERS.log_activity({ lote_id: lid, codigo: cod, actividad: args.actividad, fecha: fAg });
-      return `📝 Bitácora: ${args.actividad}${cod?` (${cod})`:''}${fTxt}`;
-    case 'complete_task':
-      const tk = (args.titulo || '').toLowerCase().trim();
-      const task = S.cache.tasks.find(t => t.estado === 'pendiente' && t.titulo?.toLowerCase().includes(tk));
-      if (!task) return `⚠️ No encontré tarea pendiente con "${args.titulo}".`;
-      await HANDLERS.complete_task(task.id);
-      return `✅ Tarea completada: "${task.titulo}"`;
-    case 'edit_task':
-      const tkE = (args.titulo_actual || '').toLowerCase().trim();
-      const taskE = S.cache.tasks.find(t => t.estado==='pendiente' && t.titulo?.toLowerCase().includes(tkE));
-      if (!taskE) return `⚠️ No encontré tarea con "${args.titulo_actual}".`;
-      const changesE = {};
-      if (args.nuevo_titulo) changesE.titulo = args.nuevo_titulo;
-      if (args.nueva_fecha) changesE.fecha_limite = args.nueva_fecha;
-      if (args.nuevo_asignado) {
-        if (args.nuevo_asignado === 'todos') { changesE.asignado_a_todos = true; changesE.asignado_a_id = null; }
-        else { const u = S.cache.users.find(u=>u.codigo===args.nuevo_asignado||u.nombre_corto?.toLowerCase()===args.nuevo_asignado.toLowerCase()); if(u){changesE.asignado_a_id=u.id; changesE.asignado_a_todos=false;} }
-      }
-      const rE = await HANDLERS.edit_task(taskE.id, changesE);
-      return rE.success ? `✏️ Tarea actualizada: "${taskE.titulo}"` : `⚠️ Error: ${rE.msg}`;
-    case 'delete_task_agent':
-      const tkD = (args.titulo || '').toLowerCase().trim();
-      const taskD = S.cache.tasks.find(t => t.estado==='pendiente' && t.titulo?.toLowerCase().includes(tkD));
-      if (!taskD) return `⚠️ No encontré tarea con "${args.titulo}".`;
-      const rD = await HANDLERS.delete_task(taskD.id);
-      return rD.success ? `🗑️ Tarea eliminada: "${taskD.titulo}"` : `⚠️ Error: ${rD.msg}`;
-    case 'update_lote_estado':
-      const loteU = S.cache.lotes.find(l => l.codigo?.toLowerCase() === (args.lote_codigo||'').toLowerCase());
-      if (!loteU) return `⚠️ No encontré el lote "${args.lote_codigo}".`;
-      const rU = await HANDLERS.edit_lote(loteU.id, { estado: args.estado });
-      return rU.success ? `🌱 Lote ${loteU.codigo} actualizado a estado: ${args.estado}` : `⚠️ Error: ${rU.msg}`;
-    case 'registrar_plaga':
-      const loteP = S.cache.lotes.find(l => l.codigo?.toLowerCase() === (args.lote_codigo||'').toLowerCase());
-      const rP = await HANDLERS.registrar_plaga({ lote_id: loteP?.id||null, tipo:args.tipo, descripcion:args.descripcion||'', severidad:args.severidad||'leve', fecha_deteccion:fechaAgente(args.fecha_deteccion)||fAg||hoyISO });
-      return rP.success ? `🐛 Plaga registrada: ${args.tipo} en ${args.lote_codigo} (severidad: ${args.severidad||'leve'})` : `⚠️ Error: ${rP.msg}`;
-    case 'controlar_plaga':
-      const tP = (args.tipo_plaga||'').toLowerCase();
-      const lCod = (args.lote_codigo||'').toLowerCase();
-      const plagaC = S.cache.plagas.find(p => p.activa && p.tipo?.toLowerCase().includes(tP) && (!lCod || p.lote?.codigo?.toLowerCase()===lCod));
-      if (!plagaC) return `⚠️ No encontré plaga activa con "${args.tipo_plaga}"${args.lote_codigo?' en '+args.lote_codigo:''}.`;
-      const rC = await HANDLERS.controlar_plaga(plagaC.id, { producto:args.producto, dosis:args.dosis, resultado:args.resultado, fecha: fAg });
-      return rC.success ? `✅ Control registrado: ${args.producto||'tratamiento'} para ${plagaC.tipo}` : `⚠️ Error: ${rC.msg}`;
-    case 'create_lote':
-      const cl = await HANDLERS.create_lote({ codigo: args.codigo, cultivo: args.cultivo, variedad: args.variedad || null });
-      return cl.success ? `🌱 Lote creado: ${args.codigo}` : `⚠️ Error lote: ${cl.msg}`;
-    case 'buscar_en_internet':
-      if (!S.isOnline) return '⚠️ Sin internet para buscar.';
-      return await webSearchGemini(args.consulta || '');
-    case 'registrar_cosecha':
-      const loteCo = S.cache.lotes.find(l => l.codigo?.toLowerCase() === (args.lote_codigo||'').toLowerCase());
-      if (!loteCo) return `⚠️ No encontré el lote "${args.lote_codigo}".`;
-      const rCo = await HANDLERS.registrar_cosecha({ lote_id:loteCo.id, kilos:args.kilos, calidad:args.calidad, observaciones:args.observaciones, fecha: fAg });
-      return rCo.success ? `🌾 Cosecha registrada: ${args.kilos} kg en ${loteCo.codigo}${args.calidad?' ('+args.calidad+')':''}${fTxt}` : `⚠️ Error: ${rCo.msg}`;
-    case 'registrar_jornal':
-      let loteJo = null;
-      if (args.lote_codigo) loteJo = S.cache.lotes.find(l => l.codigo?.toLowerCase() === args.lote_codigo.toLowerCase());
-      const rJo = await HANDLERS.registrar_jornal({ trabajador:args.trabajador, dias:args.dias, valor_dia:args.valor_dia, lote_id:loteJo?.id||null, nota:args.nota, fecha: fAg });
-      return rJo.success ? `👷 Jornal: ${args.trabajador} · ${args.dias} día(s) · ${moneyFmt(rJo.total)}${loteJo?' → '+loteJo.codigo:''}${fTxt}` : `⚠️ Error: ${rJo.msg}`;
-    default: return `⚠️ Herramienta desconocida: ${name}`;
-  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2283,11 +1641,22 @@ function _lote(t){
     if (!l && !isNaN(n)) l = lotes.find(x => parseInt(String(x.codigo).replace(/\D/g,''), 10) === n);
     if (l) return l;
   }
+  // Palabras propias de un solo lote (nombre o variedad): "el tronus", "la cebolla", "el cargamanto"
+  const palabrasDe = l => new Set(_normTxt([l.codigo, l.cultivo, l.variedad].join(' ')).split(/[^a-z0-9]+/).filter(w => w.length >= 4 && w !== 'lote'));
+  const conteo = {}; lotes.forEach(l => palabrasDe(l).forEach(w => conteo[w] = (conteo[w]||0) + 1));
+  const unicos = lotes.filter(l => [...palabrasDe(l)].some(w => conteo[w] === 1 && new RegExp('\\b' + _rxEsc(w) + '\\b').test(t)));
+  if (unicos.length === 1) return unicos[0];
   const porCultivo = lotes.filter(l => l.cultivo && new RegExp('\\b' + _rxEsc(_normTxt(l.cultivo).trim()) + '\\b').test(t));
-  return porCultivo.length === 1 ? porCultivo[0] : null;
+  if (porCultivo.length === 1) return porCultivo[0];
+  const activos = porCultivo.filter(l => !/planificacion|descanso/.test(_normTxt(l.estado)));
+  return activos.length === 1 ? activos[0] : null;
 }
 /* Trabajador de la lista de usuarios mencionado en el texto */
 function _persona(t){
+  for (const n of new Set((S.cache.jornales||[]).map(j => j.trabajador).filter(Boolean))){
+    const k = _normTxt(n).replace(/[^a-z0-9 ]/g,'').trim();
+    if (k.length >= 3 && new RegExp('\\b' + k + '\\b').test(t)) return n;
+  }
   for (const u of (S.cache.users||[])){
     const ns = [u.nombre_corto, ...String(u.nombre_corto||'').split(/\s+y\s+/), (u.nombre_completo||'').split(' ')[0]].map(   // "Juan Camilo y Pinto" responde a ambos nombres
     n => _normTxt(n).replace(/[^a-z0-9 ]/g,'').trim()).filter(n => n.length >= 3);
@@ -2406,13 +1775,36 @@ function _tareaPendiente(t){
 }
 
 /* ── PREGUNTAS SOBRE LOS REGISTROS ── (las resuelve el motor de INFORMES) */
-const RX_CONSEJO = /\b(debo|deberia|debemos|toca|hay que|conviene|recomiend\w*|se puede|puedo|podemos|sirve|como se|como hago|que hago|que le (echo|aplico|pongo)|que es|para que|por que|porque|cual es (el|la) mejor|dosis|mezclar|compatible)\b/;
+const RX_CONSEJO = /\b(debo|deberia|debemos|toca|hay que|conviene|recomiend\w*|se puede|puedo|podemos|sirve|como se|como hago|que hago|que le (echo|aplico|pongo)|que es|para que|por que|porque|cual es (el|la) mejor|mezclar|compatible|que dosis (se )?(le )?(echo|aplico|pongo|uso|recomienda)|dosis recomendada)\b/;
 const STOP_CONSULTA = new Set(('cuando cuanto cuanta cuantos cuantas fue fueron era sido la el los las lo del de en por para que se ha he has han hemos hice hizo hicimos hicieron ' +
   'ultima ultimo ultimas ultimos primera primer primero vez veces total todo toda todos todas lote lotes finca este esta estos estas mes semana ano dia dias hace hasta desde entre ' +
   'plata dinero gastado gaste gastamos gastaron gasto gastos costado costo cuesta vale precio invertido invertimos pague pagado pagamos pagaron jornal jornales cosecha cosechas cosechado cosechamos ' +
   'kilos kilo vendido vendimos vendi venta ventas ingreso ingresos plagas plaga registros registro labores labor hay tengo tenemos dime muestrame lista historial resumen ' +
   'con sin al le les me mi nos un una uno es son va van lleva llevamos llevan llevo cual cuales como donde hecho hacer ya mas menos sobre pasado pasada ' +
   'compre compramos compra compras comprado sacamos salido produjo producido sale salio ha hay habido tuvimos hubo cada').split(' '));
+/* Corrige jerga y errores de escritura comunes antes de interpretar (solo para entender, no para guardar):
+   "q"→"que", "pa"→"para", "fumigas"→"fumigaciones", "inventaro"→"inventario", "conpras"→"compras"… */
+const JERGA = { q:'que', ke:'que', xq:'porque', pq:'porque', pa:'para', pal:'para el', d:'de', tb:'tambien', xfa:'por favor', porfa:'por favor', plis:'por favor',
+  fumigas:'fumigaciones', fumigadas:'fumigaciones', fumis:'fumigaciones', fumi:'fumigacion', abonadas:'abonadas', regadas:'riegos', jornalitos:'jornales',
+  lucas:'mil', luca:'mil', barras:'mil', palos:'millones', palo:'millon', kls:'kilos', kgs:'kilos', lts:'litros', mes:'mes', sept:'septiembre', sep:'septiembre', oct:'octubre', nov:'noviembre', dic:'diciembre', ene:'enero', feb:'febrero', mar:'marzo', abr:'abril', ago:'agosto', jun:'junio', jul:'julio' };
+const VOCAB = ['fumigacion','fumigaciones','fumigar','fumigamos','inventario','bodega','compras','compramos','jornales','jornal','cosechas','cosecha','cosechamos','gastos','gastamos',
+  'tareas','tarea','pendientes','informe','reporte','listado','lista','resumen','historial','insumos','productos','fertilizacion','fertilizaciones','fertilizamos','abonadas','herbicida',
+  'fungicida','fungicidas','insecticida','insecticidas','agotados','acabando','ventas','ingresos','trabajador','trabajadores','aplicaciones','aplicados','aplicado','semana','pasada',
+  'pasado','lotes','plagas','cuanto','cuantos','cuantas','cuando','ultima','ultimo','primera','categoria','producto','herramientas','abonos','fertilizantes','riegos','podas',
+  ...MESES];
+function _canon(t){
+  const productos = (S.cache.inventory||[]).flatMap(i => _normTxt(i.descripcion).split(/[^a-z0-9]+/)).filter(w => w.length >= 5 && !/\d/.test(w));
+  const vocab = new Set([...VOCAB, ...productos]);
+  const protegidas = new Set([...(S.cache.inventory||[]).flatMap(i => _normTxt(i.descripcion).split(/[^a-z0-9]+/)), ...(S.cache.lotes||[]).flatMap(l => _normTxt([l.codigo, l.cultivo, l.variedad].join(' ')).split(/[^a-z0-9]+/))]);
+  return t.split(' ').map(w => {
+    if (JERGA[w]) return JERGA[w];
+    if (w.length < 5 || vocab.has(w) || protegidas.has(w) || STOP_CONSULTA.has(w) || /\d/.test(w)) return w;
+    let mejor = null, d0 = w.length >= 8 ? 2 : 1;
+    for (const v of vocab){ if (v[0] !== w[0] || Math.abs(v.length - w.length) > d0) continue; const d = levenshtein(w, v); if (d <= d0 && (!mejor || d < mejor.d)) mejor = { v, d }; }
+    return mejor ? mejor.v : w;
+  }).join(' ');
+}
+
 /* ── REGISTROS POR SECCIÓN ── devuelve la misma propuesta que daría el agente de IA.
    _seguro=false cuando faltan datos clave: entonces se intenta con la IA (si hay cuota). */
 const RX_COMPRA = /\b(compr\w*|entr(o|aron)|lleg(o|aron)|trajeron|traje|repus\w*|reponer|ingres(o|aron)|recibi\w*)\b/;
@@ -2436,10 +1828,17 @@ function interpretarLocal(dominio, texto){
         const kilos = _numero(kg[1]) * (/^arroba/.test(kg[2]) ? 12.5 : /^tonelada/.test(kg[2]) ? 1000 : 1);
         return { accion:'cosecha', kilos, calidad:'normal', observaciones:'', lote_codigo: lote?.codigo || null, fecha, resumen:`Cosecha de ${kilos.toLocaleString('es-CO')} kg${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
       }
-      const c = _cantidad(t), prod = c ? _producto(t) : null, nombre = prod?.descripcion || _nombreTras(t, c);
       const actividad = _frase(_quitar(texto, f));
-      return { accion:'registrar_labor', actividad, fecha, lote_codigo: lote?.codigo || null,
-        insumo: (c && nombre) ? { nombre, cantidad: c.cantidad, unidad: c.unidad } : null,
+      let insumos = productosDeLabor(texto).map(p => {
+        const it = _producto(_normTxt(p.nombre));
+        const u = p.unidad === 'g' ? 'g' : p.unidad === 'cc' ? 'cc' : (p.unidad || it?.unidad_medida || '');
+        return { nombre: it?.descripcion || p.nombre, cantidad: p.cantidad, unidad: u };
+      });
+      if (!insumos.length){
+        const c = _cantidad(t), prod = c ? _producto(t) : null, nombre = prod?.descripcion || _nombreTras(t, c);
+        if (c && nombre && !/^(agua|lts?|litros?)$/.test(_normTxt(nombre))) insumos = [{ nombre, cantidad: c.cantidad, unidad: c.unidad }];
+      }
+      return { accion:'registrar_labor', actividad, fecha, lote_codigo: lote?.codigo || null, insumos,
         resumen: `Labor${lote ? ' en ' + lote.codigo : ''}${fecha !== hoy ? ' · ' + fmtFecha(fecha) : ''}`, _seguro: actividad.length >= 3 };
     }
     case 'bodega': {
@@ -2504,9 +1903,9 @@ function interpretarLocal(dominio, texto){
 
 /* En el chat general: ¿de qué sección es esta frase? (null = que la atienda la IA) */
 function dominioDeTexto(texto){
-  const t = _txt(texto);
+  const t = _canon(_txt(texto).replace(/\s+/g, ' ').trim());
   if (_pareceAPregunta(texto)) return null;
-  if (/\bjornal|\bjornales\b/.test(t)) return 'dinero';
+  if (/\bjornal|\bjornales\b/.test(t) || (/\btrabaj(o|aron|amos)\b/.test(t) && /\b(dias?|mil|\$)/.test(t))) return 'dinero';
   if (/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|tenemos que|toca|tarea)\b/.test(t)) return 'tareas';
   if (/\b(crea\w*|nuevo|nueva|agreg\w*)\b.*\blote\b/.test(t) || (/\blote\b/.test(t) && new RegExp('\\b(' + Object.keys(ESTADOS_LOTE).join('|') + ')\\b').test(t) && /\b(pasa|paso|esta|entro|quedo|cambia|cambiar|ponlo|pon)\b/.test(t))) return 'cultivos';
   if (/\b(ya )?(termine|terminamos|complete|completamos|acabe|acabamos)\b/.test(t) && _tareaPendiente(t)) return 'tareas';
@@ -2532,9 +1931,6 @@ function respuestaMapas(texto){
 /* Control de cuota: si Gemini responde 429 (cuota agotada) se deja de llamar un rato
    y la app sigue trabajando solo con las reglas locales. */
 const IA = { pausaHasta: 0 };
-const MSG_SIN_IA = `La IA no está disponible ahora (sin cuota o sin internet), pero sin ella igual puedo:
-• Registrar labores, gastos, ventas, jornales, cosechas, tareas y movimientos de bodega. Ej: «ayer fumigué el lote 2 con 200 cc de mancozeb», «pagué 2 jornales a Pedro a 70 mil», «entraron 3 bultos de urea por 240 mil».
-• Hacer informes y responder cuándo, cuánto y cuántas veces. Ej: «dame las fechas de fumigación», «lista de compras de este mes», «inventario de fungicidas», «gastos del mes por categoría», «¿cuánto lannate se ha aplicado?».`;
 function iaDisponible(){ return S.isOnline && Date.now() > IA.pausaHasta; }
 /* Todas las llamadas a Gemini pasan por aquí: sin "pensamiento" extra (gasta tokens sin necesidad) */
 async function llamarGemini(req){
@@ -2554,7 +1950,7 @@ async function llamarGemini(req){
    insumos en bodega" o "compras de este mes por categoría", y arma el
    listado completo con totales a partir de TODOS los registros.
    ═══════════════════════════════════════════════════════════════ */
-const RX_PIDE = /^(y\s+)?(por favor\s+)?(dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
+const RX_PIDE = /^(y\s+)?(por favor\s+)?(en (que|donde)|donde|rentabilidad|cual (es|fue) (el|la)|como (vamos|va|nos fue|esta la finca|van)|(el |los )?productos? mas|dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
 const RX_TEMAS = '(insumos|productos|compras|gastos|jornales|cosechas|fumigaciones|fertilizaciones|abonadas|podas|riegos|labores|tareas|ventas|ingresos|aplicaciones|inventario|plagas|lotes|salidas|consumos)';
 const RX_FUERTE = new RegExp('\\b(lista|listado|listar|informe|reporte|resumen|historial|inventario|ultima vez|primera vez|hace cuanto|cuantas veces)\\b|\\b' + RX_TEMAS +
   '\\b.*\\b(este mes|esta semana|del mes|mes pasado|semana pasada|este ano|ano pasado|por (lote|mes|categoria|producto|trabajador)|' + MESES.join('|') + ')\\b');
@@ -2701,16 +2097,17 @@ const FUENTES_INF = {
       { fecha:_fechaCorta(p.fecha_deteccion || p.creado_en), lote:p.lote?.codigo || 'Finca', plaga:p.tipo || '', severidad:p.severidad || 'leve', trat:p.producto_usado || '', estado:p.activa ? 'activa' : 'controlada', activa:!!p.activa })),
     linea: f => `• ${f.fecha} · ${f.lote} · ${f.plaga} (${f.severidad})${f.trat ? ' · tratada con ' + f.trat : ''} · ${f.estado}` },
   lotes: { titulo:'Lotes', unidad:'$', fechas:false,
-    cols:[['lote','Lote'],['cultivo','Cultivo'],['estado','Estado'],['siembra','Siembra'],['kgTxt','Cosechado'],['valor','Costo']],
+    cols:[['lote','Lote'],['cultivo','Cultivo'],['estado','Estado'],['siembra','Siembra'],['kgTxt','Cosechado'],['valor','Costo'],['costoKg','Costo/kg']],
     filas:() => (S.cache.lotes||[]).map(l => { const kg = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id).reduce((a,c) => a + _num(c.volumen_kg), 0);
       return { dia:'', orden:0, lote_id:l.id, texto:_normTxt([l.codigo, l.cultivo, l.variedad, l.estado].join(' ')), lote:l.codigo, cultivo:[l.cultivo, l.variedad].filter(Boolean).join(' '), estado:l.estado || '',
-        siembra:l.fecha_siembra ? `${_fechaCorta(l.fecha_siembra)} (${diasDesde(l.fecha_siembra)} d)` : '—', kg, kgTxt: kg ? `${kg.toLocaleString('es-CO')} kg` : '—', valor:costoLote(l.id) }; }),
-    linea: f => `• ${f.lote} · ${f.cultivo} · ${f.estado} · siembra ${f.siembra}${f.kg ? ' · ' + f.kgTxt : ''}${f.valor ? ' · costo ' + fmtMoney(f.valor) : ''}` },
+        siembra:l.fecha_siembra ? `${_fechaCorta(l.fecha_siembra)} (${diasDesde(l.fecha_siembra)} d)` : '—', kg, kgTxt: kg ? `${kg.toLocaleString('es-CO')} kg` : '—', valor:costoLote(l.id),
+        costoKg: kg && costoLote(l.id) ? fmtMoney(costoLote(l.id) / kg) : '—' }; }),
+    linea: f => `• ${f.lote} · ${f.cultivo} · ${f.estado} · siembra ${f.siembra}${f.kg ? ' · ' + f.kgTxt : ''}${f.valor ? ' · costo ' + fmtMoney(f.valor) : ''}${f.costoKg !== '—' ? ' · ' + f.costoKg + '/kg' : ''}` },
 };
 
 /* Entiende el pedido. Devuelve la especificación del informe o null (null = no es un pedido de informe) */
 function entenderInforme(texto){
-  const t0 = _txt(texto).replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  const t0 = _canon(_txt(texto).replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim());
   if (!t0 || RX_CONSEJO.test(t0)) return null;
   const porTema = RX_EMPIEZA_TEMA.test(t0) && !_plata(t0) && !_cantidad(t0);   // "jornales de Gerardo", "tareas pendientes" (sin plata ni cantidades: no es un registro)
   if (!RX_PIDE.test(t0) && !RX_FUERTE.test(t0) && !porTema) return null;
@@ -2728,9 +2125,12 @@ function entenderInforme(texto){
   else if (/\bvent|\bvend|\bingres/.test(t)) fuente = 'ingresos';
   else if (/plaga|enfermedad/.test(t)) fuente = 'plagas';
   else if (/\btareas?\b|\bpendientes?\b/.test(t)) fuente = 'tareas';
+  else if (/rentabilidad|costo por kilo|cuanto (cuesta|sale|vale) (producir|el kilo)|ganancia|utilidad/.test(t)) fuente = 'lotes';
   else if (/gast|egreso|\bpagos?\b|pague|plata|dinero|\bcost|invert/.test(t)) fuente = 'gastos';
   else if (RX_LABOR.test(t) || /\b(labor|labores|bitacora|actividad|actividades|trabajos|se hizo|hicimos|hizo|hecho)\b/.test(t)) fuente = 'labores';
   else if (/\b(lotes|cultivos)\b/.test(t)) fuente = 'lotes';
+  if (!fuente && (/\b(resumen|informe|reporte) (general|de la finca|completo|de todo)\b|\bcomo (va|vamos|esta) (la finca|todo)\b/.test(t0)
+      || (rango && /\b(resumen|como (vamos|va|nos fue)|que (paso|ha pasado|hubo)|balance|movimientos|novedades|informe|reporte)\b/.test(t0)))) fuente = 'general';
   if (!fuente) return null;
 
   const lista = RX_LISTA.test(t0);
@@ -2742,8 +2142,12 @@ function entenderInforme(texto){
   if (fuente === 'inventario' && op !== 'lista') op = 'lista';
 
   const g = t.match(/\bpor (lote|lotes|mes|meses|trabajador|trabajadores|persona|categoria|categorias|producto|productos|proveedor)\b/);
-  let agrupar = g ? ({ lotes:'lote', meses:'mes', trabajadores:'persona', trabajador:'persona', categorias:'categoria', productos:'producto' }[g[1]] || g[1]) : null;
-  if (!agrupar && fuente === 'aplicaciones' && op === 'total') agrupar = 'producto';
+  const g2 = !g && t.match(/\b(?:en )?(?:que|cual|cuales) (lote|lotes|mes|meses|trabajador|trabajadores|categoria|categorias|producto|productos)\b/);
+  const dim = g ? g[1] : g2 ? g2[1] : null;
+  let agrupar = dim ? ({ lotes:'lote', meses:'mes', trabajadores:'persona', trabajador:'persona', categorias:'categoria', productos:'producto' }[dim] || dim) : null;
+  if (!agrupar && fuente === 'aplicaciones' && (op === 'total' || /\bmas (usad|aplicad|gastad)/.test(t))) agrupar = 'producto';
+  if (!agrupar && fuente === 'gastos' && /\ben (que|donde) (se )?(gast\w*|va|fue|se va|se fue)|\bmas (se gasta|gastamos|plata)|\bmas caro/.test(t)) agrupar = 'categoria';
+  if (!agrupar && fuente === 'compras' && /\bmas (comprad|caro)/.test(t)) agrupar = 'producto';
 
   const lote = _lote(t0);
   const usaCategoria = ['inventario','compras','gastos'].includes(fuente);
@@ -2767,6 +2171,7 @@ function entenderInforme(texto){
 
 /* Arma el informe: filtra, ordena, agrupa y suma. Devuelve {titulo, filtro, cols, filas, total, texto} */
 function generarInforme(q){
+  if (q.fuente === 'general') return resumenGeneral(q);
   const src = FUENTES_INF[q.fuente]; if (!src) return null;
   const lote = q.lote_codigo ? resolverLote(q.lote_codigo) : null;
   let filas = src.filas(q);
@@ -2856,6 +2261,33 @@ function generarInforme(q){
   return { titulo, filtro, cols, filas: filasVista, n: filas.length, total: totalPlata, totalKg, texto, agrupado: !!agrupado };
 }
 
+/* Resumen de todo en un periodo (por defecto este mes): labores, compras, jornales, cosechas, ventas y balance */
+function resumenGeneral(q){
+  const hoy = fechaLocalISO(), desde = q.desde || hoy.slice(0,8) + '01', hasta = q.hasta || hoy;
+  const base = { op:'lista', palabras:[], desde, hasta, lote_codigo: q.lote_codigo };
+  const r = f => generarInforme({ ...base, fuente: f });
+  const lab = r('labores'), com = r('compras'), jor = r('jornales'), cos = r('cosechas'), ing = r('ingresos'), sal = r('salidas');
+  const apl = generarInforme({ ...base, fuente:'aplicaciones', agrupar:'producto' });
+  const fum = generarInforme({ ...base, fuente:'labores', palabras:['fumigacion'] }), abo = generarInforme({ ...base, fuente:'labores', palabras:['fertiliz'] });
+  const egresos = com.total + jor.total, periodo = desde === hasta ? fmtFecha(desde) : `${fmtFecha(desde)} → ${fmtFecha(hasta)}`;
+  const lote = q.lote_codigo ? resolverLote(q.lote_codigo) : null;
+  const filas = [
+    { grupo:'Labores anotadas', n: lab.n, valor: 0 }, { grupo:' · fumigaciones', n: fum.n, valor: 0 }, { grupo:' · fertilizaciones', n: abo.n, valor: 0 },
+    { grupo:'Compras', n: com.n, valor: com.total }, { grupo:'Jornales', n: jor.n, valor: jor.total }, { grupo:'Insumos usados (costo)', n: sal.n, valor: sal.total },
+    { grupo:'Cosechas', n: cos.n, valor: 0, kg: cos.totalKg }, { grupo:'Ventas e ingresos', n: ing.n, valor: ing.total },
+  ];
+  const top = apl.agrupado ? apl.filas.slice(0, 5).map(g => `${g.grupo} ${g.cantTxt}`).join(', ') : '';
+  const texto = [`📊 Resumen ${lote ? 'de ' + lote.codigo + ' ' : ''}· ${periodo}`,
+    `📝 Labores: ${lab.n} (fumigaciones ${fum.n}, fertilizaciones ${abo.n})`,
+    `🛒 Compras: ${com.n} · ${fmtMoney(com.total)}`, `👷 Jornales: ${jor.n} · ${fmtMoney(jor.total)}`,
+    sal.n ? `📦 Insumos usados: ${fmtMoney(sal.total)}` : '', cos.n ? `🧺 Cosechas: ${cos.n} · ${cos.totalKg.toLocaleString('es-CO')} kg` : '',
+    ing.n ? `💰 Ventas: ${ing.n} · ${fmtMoney(ing.total)}` : '', `💸 Gastado (compras + jornales): ${fmtMoney(egresos)}`,
+    ing.n ? `⚖️ Balance: ${fmtMoney(ing.total - egresos)}` : '', top ? `🧪 Productos más aplicados: ${top}` : '',
+    'Pide el detalle de cada tema, por ejemplo «compras de este mes».'].filter(Boolean).join('\n');
+  return { titulo: 'Resumen general', filtro: [lote?.codigo, periodo].filter(Boolean).join(' · '), cols: [['grupo','Tema'],['n','Registros'],['valor','Total'],['kg','Kilos']],
+    filas, n: filas.length, total: egresos, totalKg: cos.totalKg, texto, agrupado: true };
+}
+
 /* Informe a partir de lo que escribió el usuario (null si no es un pedido de informe) */
 function informeLocal(texto){ const q = entenderInforme(texto); return q ? generarInforme(q) : null; }
 
@@ -2904,6 +2336,8 @@ const INFORMES_RAPIDOS = [
   ['ti-flask', 'Productos aplicados', 'productos aplicados este mes por producto'],
   ['ti-alert-triangle', 'Por reponer', 'lista de insumos que se están acabando'],
   ['ti-checklist', 'Tareas pendientes', 'lista de tareas pendientes'],
+  ['ti-chart-bar', 'Resumen del mes', 'resumen de este mes'],
+  ['ti-help', 'Ayuda', 'ayuda'],
 ];
 window.informeRapido = function(i){
   const r = INFORMES_RAPIDOS[i]; if (!r) return;
@@ -2911,92 +2345,293 @@ window.informeRapido = function(i){
   inp.value = r[2]; document.getElementById('btn-send')?.click();
 };
 
-function _lotesMini(){ return (S.cache.lotes||[]).map(l=>`${l.codigo} (${l.cultivo})`).join(', ') || 'ninguno'; }
-function _bodegaMini(){ return (S.cache.inventory||[]).map(i=>`${i.descripcion} [${i.unidad_medida||'u'}, quedan ${i.cantidad_actual}]`).join('; ') || 'vacía'; }
-function _usuariosMini(){ return (S.cache.users||[]).map(u=>u.nombre_corto).join(', ') || 'ninguno'; }
+/* ═══════════════════════════════════════════════════════════════
+   CEREBRO DE LA APP (SIN IA)
+   Un solo lugar decide qué hacer con lo que escribe o dicta el usuario:
+   saludo y ayuda → ir a una sección → respuestas rápidas → fichas y
+   apuntes guardados → informes → borrar/corregir lo último → registros.
+   La IA (Gemini) solo se usa si el usuario la pide con el botón, o para
+   leer fotos. Así la cuota casi no se gasta.
+   ═══════════════════════════════════════════════════════════════ */
+const PESTANAS = { bodega:'bodega', inventario:'bodega', dinero:'dinero', plata:'dinero', finanzas:'dinero', tareas:'tareas', lotes:'cultivos', cultivos:'cultivos',
+  bitacora:'bitacora', labores:'bitacora', mapas:'mapas', mapa:'mapas', chat:'agente', inicio:'agente', agente:'agente' };
+const AYUDA = `Esto es lo que entiendo sin IA (no gasta cuota):
 
+📋 Informes y preguntas
+• «informe de fumigaciones», «fumigaciones de agosto en el tomate»
+• «lista de insumos en bodega», «inventario de fungicidas», «qué se está acabando»
+• «compras de este mes», «gastos de septiembre por categoría»
+• «jornales de Gerardo», «cuánto se ha pagado en jornales»
+• «cuánto lannate se ha aplicado», «productos aplicados por producto»
+• «cosechas por lote», «resumen de lotes», «resumen de la semana»
+• «cuándo fue la última fumigación», «cuántas abonadas en agosto»
+
+✍️ Registros (siempre te pido confirmar)
+• «ayer fumigamos el tomate con trionex 100cc, lannate 150cc para 100 lts»
+• «cosechamos 300 kilos en el lote 3»
+• «entraron 2 bultos de urea a 80 mil», «usé medio litro de mancozeb»
+• «pagué 2 jornales a Gerardo a 65 mil», «gasté 50 mil en transporte», «vendimos tomate por 1,5 millones»
+• «recuérdame fumigar el viernes», «ya terminé de fumigar el lote 2»
+• «recuerda que el lote 3 se riega cada 3 días» (lo guardo como apunte)
+
+🛠️ Otros
+• «borra la última labor», «corrige el último gasto»
+• «para qué sirve lannate» (ficha del producto)
+• «abre bodega», «saldo», «qué hay para hoy», «clima»
+
+Para consejos (plagas, dosis recomendadas, mezclas) toca «Preguntar a la IA».`;
+
+/* Interfaz de cada barra de sección (ya no son agentes de IA) */
 const AGENTES = {
-  bitacora: {
-    nombre:'Tina', rol:'ayudante de bitácora', icon:'ti-leaf', color:'green',
-    ph:'Dicta o escribe la labor… ("ayer podé el lote 2")',
-    instruccion(){ return `Eres Tina, ayudante de bitácora de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}.
-Convierte lo que diga el usuario en un registro de labor. Si dice "ayer", "antier", "el lunes", calcula la fecha exacta (YYYY-MM-DD) desde hoy. Si menciona que usó un insumo (producto + cantidad + unidad), inclúyelo para descontar de bodega.
-Responde SOLO JSON:
-{"accion":"registrar_labor","actividad":"texto claro","fecha":"YYYY-MM-DD","lote_codigo":"código o null","insumo":{"nombre":"...","cantidad":number,"unidad":"..."} o null,"resumen":"frase corta para confirmar"}
-Si es una pregunta y no un registro: {"accion":"responder","texto":"respuesta corta con lo que sepas de los lotes; si necesitas datos que no tienes, dilo"}`; }
-  },
-  bodega: {
-    nombre:'Beto', rol:'ayudante de bodega', icon:'ti-building-warehouse', color:'brown',
-    ph:'¿Qué entró o salió? ("entraron 2 bultos de urea a 80 mil")',
-    instruccion(){ return `Eres Beto, ayudante de bodega de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Productos: ${_bodegaMini()}. Lotes: ${_lotesMini()}.
-Interpreta entradas (compras/reposición) y salidas (consumo) de insumos.
-Responde SOLO JSON:
-- Entrada: {"accion":"entrada","producto":"nombre","cantidad":number,"unidad":"kg|litro|cc|galon|bulto|unidad","precio_total":number o null,"lote_codigo":null,"resumen":"..."}
-- Salida/uso: {"accion":"salida","producto":"nombre","cantidad":number,"unidad":"...","lote_codigo":"código o null","resumen":"..."}
-- Pregunta: {"accion":"responder","texto":"..."}
-Usa los nombres de productos tal como los diga el usuario; la app corrige parecidos.`; }
-  },
-  dinero: {
-    nombre:'Cuca', rol:'ayudante de dinero', icon:'ti-coin', color:'blue',
-    ph:'Registra gasto, venta o jornal…',
-    instruccion(){ return `Eres Cuca, ayudante de finanzas de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
-Responde SOLO JSON:
-- Gasto: {"accion":"gasto","concepto":"...","valor":number,"categoria":"Agroquímicos|Nutrición|Insumos Consumibles|Equipos y Herramientas|EPP|jornales|servicios|otro","fecha":"YYYY-MM-DD","lote_codigo":null,"resumen":"..."}
-- Ingreso/venta: {"accion":"ingreso","concepto":"...","valor":number,"fecha":"YYYY-MM-DD","resumen":"..."}
-- Jornal: {"accion":"jornal","trabajador":"...","dias":number,"valor_dia":number,"lote_codigo":"código o null","fecha":"YYYY-MM-DD","resumen":"..."}
-- Pregunta: {"accion":"responder","texto":"..."}
-Calcula fechas reales si dice "ayer", etc.`; }
-  },
-  tareas: {
-    nombre:'Memo', rol:'ayudante de tareas', icon:'ti-checklist', color:'yellow',
-    ph:'Programa o completa una tarea…',
-    instruccion(){ return `Eres Memo, ayudante de tareas de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}. Trabajadores: ${_usuariosMini()}.
-Responde SOLO JSON:
-- Crear: {"accion":"crear_tarea","titulo":"...","fecha_limite":"YYYY-MM-DD o null","asignado":"nombre o 'todos'","lote_codigo":null,"resumen":"..."}
-- Completar: {"accion":"completar_tarea","titulo":"palabras clave","resumen":"..."}
-- Pregunta: {"accion":"responder","texto":"..."}
-Si dice "en 3 días", "el viernes", calcula la fecha.`; }
-  },
-  cultivos: {
-    nombre:'Lalo', rol:'ayudante de lotes', icon:'ti-plant', color:'green',
-    ph:'Crea un lote o cambia su estado…',
-    instruccion(){ return `Eres Lalo, ayudante de lotes de una finca. Hoy es ${hoyISO()}. Calendario (úsalo para ayer/antier/el lunes; fechas nunca futuras salvo tareas):\n${calendarioCtx()}\n Lotes: ${_lotesMini()}.
-Responde SOLO JSON:
-- Crear: {"accion":"crear_lote","codigo":"...","cultivo":"...","variedad":"... o null","resumen":"..."}
-- Estado: {"accion":"estado_lote","lote_codigo":"...","estado":"planificación|siembra|vegetativo|producción|cosecha|descanso","resumen":"..."}
-- Pregunta: {"accion":"responder","texto":"..."}`; }
-  },
-  mapas: {
-    nombre:'Tito', rol:'ayudante de mapas', icon:'ti-map-2', color:'blue',
-    ph:'Pregúntame por áreas o ubicación…',
-    soloConsulta:true, local: respuestaMapas,   // responde sin IA
-    instruccion(){ const dims=(S.cache.lotes||[]).map(l=>{const pts=(S.cache.coordenadas||[]).filter(c=>c.lote_id===l.id);const d=pts.length>=3?MapEngine.calcDims(pts.map(p=>({lat:p.latitud,lng:p.longitud}))):null;return `${l.codigo}: ${d?MapEngine.fmtArea(d.area)+', '+MapEngine.fmtDist(d.perimetro):'sin medir'}`;}).join('; ');
-      return `Eres Tito, ayudante de mapas. Áreas de lotes: ${dims||'ninguno'}. Responde SOLO JSON: {"accion":"responder","texto":"respuesta corta sobre áreas/perímetros/ubicación"}`; }
-  }
+  bitacora: { nombre:'Bitácora', rol:'Escribe o dicta la labor · sin IA', icon:'ti-leaf', color:'green', ph:'"Ayer fumigamos el tomate con lannate 150cc"' },
+  bodega:   { nombre:'Bodega', rol:'Entradas, salidas e inventario · sin IA', icon:'ti-building-warehouse', color:'brown', ph:'"Entraron 2 bultos de urea a 80 mil"' },
+  dinero:   { nombre:'Dinero', rol:'Gastos, ventas, jornales e informes · sin IA', icon:'ti-coin', color:'blue', ph:'"Pagué 2 jornales a Gerardo a 65 mil"' },
+  tareas:   { nombre:'Tareas', rol:'Programa o completa tareas · sin IA', icon:'ti-checklist', color:'yellow', ph:'"Recuérdame fumigar el viernes"' },
+  cultivos: { nombre:'Lotes', rol:'Crea lotes o cambia su estado · sin IA', icon:'ti-plant', color:'green', ph:'"El lote repollo pasó a producción"' },
+  mapas:    { nombre:'Mapas', rol:'Áreas y perímetros · sin IA', icon:'ti-map-2', color:'blue', ph:'"¿Cuánto mide el invernadero?"', local: respuestaMapas },
+};
+/* Título e ícono de la tarjeta de confirmación según lo que se va a guardar */
+const ACCIONES_UI = {
+  registrar_labor:['ti-notebook','Anotar labor'], cosecha:['ti-basket','Registrar cosecha'], entrada:['ti-download','Entrada a bodega'],
+  salida:['ti-upload','Salida de bodega'], gasto:['ti-receipt','Registrar gasto'], ingreso:['ti-cash','Registrar venta o ingreso'],
+  jornal:['ti-users','Registrar jornal'], crear_tarea:['ti-calendar-plus','Programar tarea'], completar_tarea:['ti-circle-check','Completar tarea'],
+  crear_lote:['ti-plant','Crear lote'], estado_lote:['ti-plant','Cambiar estado del lote'], apunte:['ti-bulb','Guardar apunte'],
 };
 
-const INSTR_CONSULTA = `
-Si el usuario PREGUNTA por datos ya registrados (cuándo, cuánto, cuántas veces, última vez, total), NO respondas tú. Devuelve:
-{"accion":"consultar","tabla":"labores|gastos|jornales|gasto_total|costo_lote|ingresos|cosechas|plagas","operacion":"ultimo|primero|lista|total|contar","lote_codigo":"código o null","palabras":["..."],"desde":"YYYY-MM-DD o null","hasta":"YYYY-MM-DD o null"}
-Usa "responder" solo para preguntas que no son sobre registros.`;
+/* Saludo con lo más importante del día */
+function saludoLocal(){
+  const a = Alerts.compute(), nombre = S.user?.display || '';
+  const ult = (S.cache.activities||[]).slice().sort((x,y) => tsOrden(y.fecha) - tsOrden(x.fecha))[0];
+  const l = [`${Alerts.greeting()}${nombre ? ', ' + nombre : ''}.`];
+  if (a.vencidas.length) l.push(`⚠️ ${a.vencidas.length} tarea(s) vencida(s): ${a.vencidas.slice(0,3).map(t => t.titulo).join(', ')}`);
+  if (a.hoy.length) l.push(`📋 Para hoy: ${a.hoy.map(t => t.titulo).join(', ')}`);
+  if (a.stockCero.length || a.stockBajo.length) l.push(`📦 Por reponer: ${a.stockCero.length + a.stockBajo.length} insumo(s). Escribe «qué se está acabando».`);
+  if (ult) l.push(`📝 Última labor: ${fmtFechaLarga(fechaDia(ult.fecha))} · ${ult.actividad}`);
+  l.push('Escribe «ayuda» para ver todo lo que puedo hacer sin IA.');
+  return l.join('\n');
+}
 
-/* Llama a Gemini Flash en modo JSON con el contexto pequeño del dominio */
-async function parseAgente(dominio, texto, media){
-  const spec = AGENTES[dominio]; if(!spec) return null;
-  const parts=[]; if(media) parts.push({inlineData:{mimeType:media.type,data:media.b64}});
-  parts.push({text: texto || 'Analiza la imagen.'});
-  const req = {
-    contents:[{role:'user',parts}],
-    systemInstruction:{parts:[{text: spec.instruccion() + (spec.soloConsulta ? '' : INSTR_CONSULTA)}]},
-    generationConfig:{ responseMimeType:'application/json', maxOutputTokens:500, temperature:0.2 }
+/* Ficha o datos de un producto de bodega: "para qué sirve lannate", "ficha del engeo" */
+function fichaLocal(t){
+  const m = t.match(/\b(para que sirve|que es|que hace|ficha( tecnica)?( de| del)?|informacion (de|del|sobre)|datos (de|del)|caracteristicas (de|del)|ingrediente activo (de|del)|franja (de|del)|toxicidad (de|del))\s+(el |la |los |las )?(.+)$/);
+  if (!m) return null;
+  const nombre = m[m.length - 1].replace(/[?¿!.]/g, '').trim();
+  const r = buscarDifuso(nombre, S.cache.inventory || [], 'descripcion'), it = r.exacto || r.sugerido;
+  if (!it) return null;
+  const base = `📦 ${it.descripcion}\n${[it.categoria, subcatActual(it.subcategoria)].filter(Boolean).join(' · ')}${it.detalles ? '\nComposición: ' + it.detalles : ''}${it.franja_toxicologica ? '\nFranja: ' + it.franja_toxicologica : ''}\nEn bodega: ${it.cantidad_actual} ${it.unidad_medida || ''}`;
+  if (it.ficha_investigacion) return { texto: `${base}\n\n🔬 Ficha guardada:\n${it.ficha_investigacion}` };
+  return { texto: `${base}\n\nTodavía no tiene ficha técnica guardada.`, boton: { label:'Investigar con IA (1 consulta)', icon:'ti-microscope', fn:'flowInvestigarInsumo', arg: it.id } };
+}
+
+/* Apuntes guardados (memoria): "recuerda que…" guarda; "qué sabemos de…" busca */
+function apunteLocal(texto, t){
+  let m = String(texto).match(/^\s*(recuerda|recordar|anota|apunta|guarda|ten en cuenta)\s+que\s+(.+)$/i);
+  if (m && !/\brecuerdame\b/.test(t)) return { propuesta: { accion:'apunte', contenido: _frase(m[2]), resumen:'Lo guardo como apunte de la finca' } };
+  m = t.match(/\b(que (sabemos|sabes|recuerdas|tenemos anotado|hay anotado)|apuntes?|notas?) (de|del|sobre|acerca de)\s+(.+)$/);
+  if (!m) return null;
+  const pal = m[4].split(/\s+/).filter(w => w.length >= 4).map(_raiz);
+  const hits = (S.cache.memoria || []).filter(x => { const c = _normTxt(x.contenido); return pal.some(w => c.includes(w)); });
+  return { texto: hits.length ? `🧠 Apuntes sobre "${m[4]}":\n` + hits.map(x => `• ${x.contenido}${x.fecha ? ' (' + _fechaCorta(x.fecha) + ')' : ''}`).join('\n') : `No tengo apuntes sobre "${m[4]}". Puedes guardar uno con «recuerda que …».` };
+}
+
+/* Borrar o corregir el último registro de un tipo: "borra la última labor", "corrige el último gasto" */
+function ultimoRegistroLocal(t){
+  const m = t.match(/\b(borra|borrar|borre|elimina|eliminar|quita|quitar|deshacer|deshaz|corrige|corregir|edita|editar|cambia|cambiar|modifica|modificar|arregla)\b.*\b(ultim[oa]|anterior)\b|^(deshacer|deshaz)\b/);
+  if (!m) return null;
+  const borrar = /\b(borr|elimin|quit|deshac|deshaz)/.test(t);
+  const cuando = (x, f) => tsOrden(x.creado_en || x.created_at || f(x));
+  const ult = (lista, f) => (lista || []).slice().sort((a,b) => cuando(b, f) - cuando(a, f))[0];
+  let tipo = /jornal/.test(t) ? 'jornal' : /cosech/.test(t) ? 'cosecha' : /\b(venta|ingreso)/.test(t) ? 'ingreso' : /\b(gasto|compra)/.test(t) ? 'gasto' : /tarea/.test(t) ? 'tarea' : 'labor';
+  const R = {
+    labor:   () => { const x = ult(S.cache.activities, y => y.fecha); return x && { desc:`${_fechaCorta(x.fecha)} · ${x.actividad}`, del:['flowDeleteActivity', x.id], edit:['flowEditActivity', x.id, x.actividad] }; },
+    gasto:   () => { const x = ult((S.cache.compras||[]).filter(c => c.origen !== 'consumo'), y => y.fecha_compra); return x && { desc:`${_fechaCorta(x.fecha_compra)} · ${x.concepto} · ${fmtMoney(x.valor_total)}`, del:['flowDeleteGasto', x.id, x.concepto], edit:['flowEditGasto', x.id, x.concepto, x.valor_total, x.categoria] }; },
+    jornal:  () => { const x = ult(S.cache.jornales, y => y.fecha); return x && { desc:`${_fechaCorta(x.fecha)} · ${x.trabajador} · ${fmtMoney(x.valor_total)}`, del:['flowDeleteJornal', x.id], edit:['flowEditJornal', x.id] }; },
+    cosecha: () => { const x = ult(S.cache.cosechas, y => y.fecha_recoleccion); return x && { desc:`${_fechaCorta(x.fecha_recoleccion)} · ${x.volumen_kg} kg`, del:['flowDeleteCosecha', x.id], edit:['flowEditCosecha', x.id] }; },
+    ingreso: () => { const x = ult(S.cache.ingresos, y => y.fecha); return x && { desc:`${_fechaCorta(x.fecha)} · ${x.concepto} · ${fmtMoney(x.valor_total)}`, del:['flowDeleteIngreso', x.id, x.concepto], edit:['flowEditIngreso', x.id, x.concepto, x.valor_total] }; },
+    tarea:   () => { const x = ult(S.cache.tasks, y => y.creado_en); return x && { desc:x.titulo, del:['flowDeleteTask', x.id, x.titulo], edit:['flowEditTask', x.id] }; },
   };
-  const r = await llamarGemini(req);
-  if(!r.ok) throw new Error('red/cuota '+r.status);
-  const data = r.data;
-  let txt=(data.candidates?.[0]?.content?.parts||[]).filter(p=>p.text).map(p=>p.text).join('').trim();
-  txt=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
-  const m=txt.match(/\{[\s\S]*\}/); if(!m) return null;
-  return JSON.parse(m[0]);
+  const r = R[tipo]();
+  if (!r) return { texto:`No encontré ningún registro de ese tipo (${tipo}).` };
+  const [fn, ...args] = borrar ? r.del : r.edit;
+  return { ejecutar: () => window[fn](...args), texto: `${borrar ? '🗑️ Último' : '✏️ Último'} registro de ${tipo}: ${r.desc}` };
+}
+
+/* Si la frase no se entendió: el usuario elige qué es (sin IA) */
+const OPCIONES_REGISTRO = [
+  { value:'bitacora', label:'Anotar como labor', icon:'ti-notebook' }, { value:'gasto', label:'Registrar gasto', icon:'ti-receipt', color:'red' },
+  { value:'jornal', label:'Registrar jornal', icon:'ti-users', color:'brown' }, { value:'ingreso', label:'Registrar venta o ingreso', icon:'ti-cash', color:'blue' },
+  { value:'tareas', label:'Programar tarea', icon:'ti-calendar-plus', color:'yellow' }, { value:'entrada', label:'Entró a bodega (compra)', icon:'ti-download', color:'brown' },
+  { value:'salida', label:'Salió de bodega (uso)', icon:'ti-upload', color:'brown' },
+  { value:'apunte', label:'Guardar como apunte', icon:'ti-bulb' }, { value:'ia', label:'Preguntar a la IA (gasta cuota)', icon:'ti-sparkles', color:'blue' },
+];
+function propuestaForzada(tipo, texto){
+  const t = String(texto||'').trim();
+  if (tipo === 'apunte') return { accion:'apunte', contenido:_frase(t), resumen:'Lo guardo como apunte de la finca' };
+  if (tipo === 'entrada' || tipo === 'salida'){
+    const p = interpretarLocal('bodega', (tipo === 'entrada' ? 'entró ' : 'usé ') + t);
+    return (p && p.accion === tipo) ? p : { accion:tipo, producto:'', cantidad:'', unidad:'', precio_total:'', lote_codigo:null, fecha:hoyISO(), resumen:'Revisa y completa' };
+  }
+  if (tipo === 'gasto' || tipo === 'jornal' || tipo === 'ingreso'){
+    const pista = { gasto:'gasté ', jornal:'jornal ', ingreso:'vendimos ' }[tipo];
+    const p = interpretarLocal('dinero', /^(gast|jornal|vend)/i.test(t) ? t : pista + t);
+    if (p && p.accion === tipo) return p;
+    return tipo === 'jornal' ? { accion:'jornal', trabajador:'', dias:1, valor_dia:'', lote_codigo:null, fecha:hoyISO(), resumen:'Revisa y completa' }
+      : tipo === 'ingreso' ? { accion:'ingreso', concepto:_frase(t), valor:'', fecha:hoyISO(), resumen:'Revisa y completa' }
+      : { accion:'gasto', concepto:_frase(t), valor:'', categoria:'otro', lote_codigo:null, fecha:hoyISO(), resumen:'Revisa y completa' };
+  }
+  const p = interpretarLocal(tipo, t);
+  if (p && p.accion !== 'informe') return p;
+  if (tipo === 'bitacora') return { accion:'registrar_labor', actividad:_frase(t), fecha:hoyISO(), lote_codigo:null, insumos:[], resumen:'Revisa y completa' };
+  if (tipo === 'tareas') return { accion:'crear_tarea', titulo:_frase(t), fecha_limite:'', asignado:'todos', lote_codigo:null, resumen:'Revisa y completa' };
+  return null;
+}
+
+/* ── El cerebro: decide qué hacer. Devuelve
+     {texto, informe?, boton?}        → respuesta para mostrar
+     {propuesta, dominio}             → tarjeta para confirmar y guardar
+     {ejecutar, texto}                → abre un flujo de la app (borrar/editar)
+     {elegir:true}                    → no entendí: que el usuario elija
+     {ia:true, texto}                 → es una consulta de consejo (botón de IA) ── */
+function pensar(texto, dominio){
+  const raw = String(texto||'').trim(); if (!raw) return null;
+  const t = _txt(raw).replace(/\s+/g, ' ').trim();
+  const corto = t.split(' ').length <= 6;
+
+  if (/^(ia|ai|gemini|pregunta(le)? a la ia|preguntale a la ia|consulta a la ia)\b[:,]?\s*/.test(t)) return { ia:true, directo:true, texto: raw.replace(/^\s*(ia|ai|gemini|preg[uú]nta(le)? a la ia|consulta a la ia)\s*[:,]?\s*/i, '') };
+  if (corto && /^(hola|holi|buenas|buenos dias|buenas tardes|buenas noches|hey|que mas|quiubo|epa|saludos)\b/.test(t) && !RX_LABOR.test(t)) return { texto: saludoLocal() };
+  if (/^(ayuda|help|menu|\?)$|\b(que (puedes|sabes) hacer|como (funciona|te uso|se usa)|que te puedo (decir|preguntar|pedir)|comandos|ejemplos)\b/.test(t)) return { texto: AYUDA };
+  if (corto && /^(gracias|muchas gracias|listo|ok|okey|vale|perfecto|bien|excelente|de una)\b/.test(t)) return { texto: '👍 Con gusto.' };
+  const nav = t.match(/^(abre|abrir|abreme|ir a|ve a|vamos a|llevame a|muestrame la pestana de|pestana)\s+(la |el |los |las )?(\w+)/);
+  if (nav && PESTANAS[nav[3]]) return { ir: PESTANAS[nav[3]], texto: `Listo, abrí ${nav[3]}.` };
+
+  const rapido = respuestaLocal(raw); if (rapido) return { texto: rapido };
+  const ficha = fichaLocal(t); if (ficha) return ficha;
+  const apunte = apunteLocal(raw, t); if (apunte) return apunte.propuesta ? { propuesta: apunte.propuesta, dominio:'apunte' } : apunte;
+  const ultimo = ultimoRegistroLocal(t); if (ultimo) return ultimo;
+  if (dominio === 'mapas') return { texto: respuestaMapas(raw) };
+
+  const inf = informeLocal(raw); if (inf) return { texto: inf.texto, informe: inf };
+
+  // Registros: primero la sección donde se escribe, después lo que diga el texto
+  const dom = (dominio && dominio !== 'agente' && dominio !== 'mapas') ? dominio : dominioDeTexto(raw);
+  if (dom){
+    const p = interpretarLocal(dom, raw);
+    if (p && p.accion !== 'informe' && (p._seguro || dominio === dom)) return { propuesta: p, dominio: dom };
+    if (!p && dominio === dom && !_pareceAPregunta(raw)){
+      if (dom === 'bitacora') return { propuesta: propuestaForzada('bitacora', raw), dominio: dom };
+      if (dom === 'tareas') return { propuesta: propuestaForzada('tareas', raw), dominio: dom };
+    }
+    if (p && p.accion !== 'informe') return { propuesta: p, dominio: dom };
+  }
+  if (_pareceAPregunta(raw) || RX_CONSEJO.test(t)) return { ia:true, texto: raw };
+  return { elegir:true };
+}
+
+/* IA pequeña para consejos: una sola llamada, sin herramientas y con poco contexto */
+async function consejoIA(pregunta, media){
+  if (!iaDisponible()) return S.isOnline ? '⏳ La IA está sin cuota por ahora. Intenta más tarde.' : '📵 Sin internet no puedo preguntarle a la IA.';
+  const lotes = (S.cache.lotes||[]).map(l => `${l.codigo} (${[l.cultivo, l.variedad].filter(Boolean).join(' ')}, ${l.estado}${l.fecha_siembra ? ', ' + diasDesde(l.fecha_siembra) + ' días de sembrado' : ''})`).join('; ');
+  const bodega = (S.cache.inventory||[]).filter(i => (parseFloat(i.cantidad_actual)||0) > 0).map(i => i.descripcion).slice(0, 80).join(', ');
+  const sys = `Eres asesor agronómico de la finca El Retiro (Pradera, Valle del Cauca, Colombia). Hoy es ${fechaLarga()}. Responde en español sencillo, práctico y corto (máximo 160 palabras), sin markdown.
+Lotes: ${lotes || 'ninguno'}. Productos en bodega: ${bodega || 'ninguno'}.${Weather.contextForAgent()}
+Si recomiendas productos, prioriza los que hay en bodega. Advierte riesgos de mezclas y toxicidad sin rodeos. Si no estás seguro, dilo.`;
+  const parts = [{ text: pregunta || 'Analiza esta foto de la finca: qué ves y qué recomiendas.' }];
+  if (media){ let md = media; try{ md = await comprimirParaAgente(media); }catch(e){} parts.unshift({ inlineData:{ mimeType: md.type, data: md.b64 } }); }
+  const r = await llamarGemini({ contents:[{ role:'user', parts }], systemInstruction:{ parts:[{ text: sys }] }, generationConfig:{ maxOutputTokens: 700, temperature: 0.4 } });
+  if (!r.ok) return r.status === 429 ? '⏳ La IA se quedó sin cuota por ahora. Lo demás de la app sigue funcionando.' : '⚠️ No pude hablar con la IA (sin red).';
+  const txt = (r.data.candidates?.[0]?.content?.parts || []).filter(p => p.text).map(p => p.text).join('').trim();
+  return txt ? '🤖 ' + txt : '🤖 La IA no respondió nada.';
+}
+function fechaLarga(){ return new Date().toLocaleDateString('es-CO', { weekday:'long', year:'numeric', month:'long', day:'numeric', timeZone: TZ_FINCA }); }
+
+/* Confirma y guarda una propuesta. Devuelve el texto del resultado o '' si se canceló */
+async function confirmarYGuardar(dominio, prop){
+  const v = await confirmAccion(dominio, prop);
+  if (!v) return '';
+  try{ return await ejecutarAccion(v) || '✅ Hecho.'; }
+  catch(e){ return '⚠️ Error: ' + e.message; }
+}
+async function elegirTipo(texto){
+  return await M.select({ title:'¿Qué hago con esto?', sub: esc(texto), options: OPCIONES_REGISTRO });
+}
+
+/* Barra de cada sección */
+async function flowAgenteSeccion(dominio, texto){
+  if (!texto) return;
+  const ag = AGENTES[dominio] || { nombre:'Finca', icon:'ti-leaf' };
+  const mostrar = (txt) => M.confirm({ title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(txt).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:'' });
+  let r = pensar(texto, dominio);
+  if (!r) return;
+  if (r.ir){ S.tab = r.ir; Nav.push(); render(); return; }
+  if (r.ejecutar){ await r.ejecutar(); return; }
+  if (r.informe){ abrirInforme(r.informe); return; }
+  if (r.elegir){
+    const tipo = await elegirTipo(texto); if (!tipo) return;
+    if (tipo === 'ia'){ await mostrar(await consejoIA(texto)); return; }
+    r = { propuesta: propuestaForzada(tipo, texto), dominio: tipo };
+    if (!r.propuesta) return;
+  }
+  if (r.ia){
+    const ok = r.directo || await M.confirm({ title:'Pregunta de consejo', body:'Esto no está en los registros de la finca. ¿Se lo pregunto a la IA? (gasta 1 consulta de la cuota)', okText:'Preguntar a la IA', cancelText:'No' });
+    if (ok) await mostrar(await consejoIA(r.texto));
+    return;
+  }
+  if (r.propuesta){
+    const msg = await confirmarYGuardar(r.dominio, r.propuesta);
+    if (msg) toast(msg);
+    render(); return;
+  }
+  if (r.texto) await mostrar(r.texto);
+}
+
+/* Botón «Preguntar a la IA» en un mensaje del chat */
+window.preguntarIA = async function(idx){
+  const m = S.messages[idx]; if (!m || !m.preguntaIA) return;
+  const pregunta = m.preguntaIA; m.preguntaIA = null;
+  S.loading = true; render();
+  const resp = await consejoIA(pregunta);
+  S.messages.push({ role:'assistant', content: resp });
+  S.loading = false; render();
+  setTimeout(() => document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'}), 60);
+};
+window.botonMensaje = function(idx){
+  const b = S.messages[idx]?.boton; if (!b || typeof window[b.fn] !== 'function') return;
+  window[b.fn](b.arg);
+};
+
+/* Chat principal: todo pasa por el cerebro */
+async function atenderChat(texto, media){
+  const hist = S.messages;
+  const decir = (content, extra = {}) => hist.push({ role:'assistant', content, ...extra });
+  if (media){
+    decir(await consejoIA(texto, media));
+    return;
+  }
+  let r = pensar(texto, 'agente');
+  if (!r) return;
+  if (r.ir){ decir(r.texto); S.tab = r.ir; Nav.push(); return; }
+  if (r.ejecutar){ decir(r.texto); S.loading = false; render(); await r.ejecutar(); return; }
+  if (r.informe){ decir(r.texto, { informe: r.informe }); return; }
+  if (r.elegir){
+    S.loading = false; render();
+    const tipo = await elegirTipo(texto);
+    if (!tipo){ decir('No guardé nada. Escribe «ayuda» para ver ejemplos de lo que entiendo.'); return; }
+    if (tipo === 'ia'){ S.loading = true; render(); decir(await consejoIA(texto)); return; }
+    r = { propuesta: propuestaForzada(tipo, texto), dominio: tipo };
+    if (!r.propuesta){ decir('No pude armar ese registro; inténtalo desde la sección.'); return; }
+  }
+  if (r.ia){
+    if (r.directo){ decir(await consejoIA(r.texto)); return; }
+    decir('🤔 Esa es una pregunta de consejo y no está en los registros de la finca. Puedo preguntársela a la IA (gasta 1 consulta de la cuota).', { preguntaIA: r.texto });
+    return;
+  }
+  if (r.propuesta){
+    S.loading = false; render();
+    const msg = await confirmarYGuardar(r.dominio, r.propuesta);
+    decir(msg || 'Listo, no guardé nada.');
+    return;
+  }
+  decir(r.texto, r.boton ? { boton: r.boton } : {});
 }
 
 /* Campos editables según la acción propuesta (para confirmar/editar en el momento) */
@@ -3008,9 +2643,10 @@ function camposDe(prop){
       const f=[{k:'actividad',label:'Labor',type:'text',v:prop.actividad||''},
         {k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()},
         {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
-      if(prop.insumo){ f.push({k:'_ins_nombre',label:'Insumo usado',type:'text',v:prop.insumo.nombre||''},
-        {k:'_ins_cant',label:'Cantidad',type:'number',v:prop.insumo.cantidad||''},
-        {k:'_ins_uni',label:'Unidad',type:'text',v:prop.insumo.unidad||''}); }
+      const ins = prop.insumos || (prop.insumo ? [prop.insumo] : []);
+      ins.slice(0, 12).forEach((x, n) => f.push({k:`_ins_${n}_nombre`,label:`Insumo ${n+1} (se descuenta de bodega)`,type:'text',v:x.nombre||''},
+        {k:`_ins_${n}_cant`,label:'Cantidad',type:'number',v:x.cantidad||''},
+        {k:`_ins_${n}_uni`,label:'Unidad',type:'text',v:x.unidad||''}));
       return f;
     }
     case 'entrada': return [{k:'producto',label:'Producto',type:'text',v:prop.producto||''},
@@ -3026,6 +2662,7 @@ function camposDe(prop){
       {k:'valor_dia',label:'Valor por día',type:'number',v:prop.valor_dia||''},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_tarea': return [{k:'titulo',label:'Tarea',type:'text',v:prop.titulo||''},{k:'fecha_limite',label:'Fecha límite',type:'date',v:prop.fecha_limite||''},{k:'asignado',label:'Asignado a',type:'select',v:prop.asignado||'todos',options:userOpts},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
     case 'completar_tarea': return [{k:'titulo',label:'Tarea a completar',type:'text',v:prop.titulo||''}];
+    case 'apunte': return [{k:'contenido',label:'Apunte para recordar',type:'text',v:prop.contenido||''}];
     case 'cosecha': return [{k:'kilos',label:'Kilos',type:'number',v:prop.kilos||''},{k:'calidad',label:'Calidad',type:'select',v:prop.calidad||'normal',options:[{value:'primera',label:'Primera'},{value:'normal',label:'Normal'},{value:'segunda',label:'Segunda'}]},
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'observaciones',label:'Observaciones',type:'text',v:prop.observaciones||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_lote': return [{k:'codigo',label:'Código',type:'text',v:prop.codigo||''},{k:'cultivo',label:'Cultivo',type:'text',v:prop.cultivo||''},{k:'variedad',label:'Variedad',type:'text',v:prop.variedad||''}];
@@ -3037,13 +2674,13 @@ function camposDe(prop){
 /* Tarjeta de confirmación con edición en el momento. Devuelve valores o null */
 async function confirmAccion(dominio, prop){
   const campos = camposDe(prop);
-  const ag = AGENTES[dominio];
+  const [icono, titulo] = ACCIONES_UI[prop.accion] || ['ti-check', 'Confirmar'];
   const fieldsHtml = campos.map((f,i)=>{
     const id='ca-'+i;
     if(f.type==='select'){ const opts=(f.options||[]).map(o=>`<option value="${esc(o.value)}" ${String(o.value)===String(f.v)?'selected':''}>${esc(o.label)}</option>`).join(''); return `<div class="modal-field"><label class="modal-label">${esc(f.label)}</label><select class="modal-select" id="${id}">${opts}</select></div>`; }
     return `<div class="modal-field"><label class="modal-label">${esc(f.label)}</label><input class="modal-input" type="${f.type==='number'?'number':f.type==='date'?'date':'text'}" id="${id}" value="${esc(f.v)}"></div>`;
   }).join('');
-  const html=`<div class="modal-h"><i class="ti ${ag.icon}"></i> ${esc(ag.nombre)}</div>
+  const html=`<div class="modal-h"><i class="ti ${icono}"></i> ${esc(titulo)}</div>
     <div class="modal-sub"><i class="ti ti-eye"></i> ${esc(prop.resumen||'Revisa y confirma')}</div>
     ${fieldsHtml}
     <div class="modal-actions"><button class="btn btn-ghost" id="ca-cancel">Cancelar</button><button class="btn btn-primary" id="ca-ok"><i class="ti ti-check"></i> Confirmar</button></div>`;
@@ -3076,12 +2713,16 @@ async function ejecutarAccion(v){
     case 'registrar_labor':{
       const lote=resolverLote(v.lote_codigo);
       await HANDLERS.log_activity({lote_id:lote?.id||null, codigo:lote?.codigo||null, actividad:v.actividad, fecha:v.fecha||null});
-      if(v._ins_nombre && parseFloat(v._ins_cant)>0){
-        const it=await resolverProducto(v._ins_nombre);
-        if(it){ const cant=conv(v._ins_cant, v._ins_uni||it.unidad_medida, it.unidad_medida); await consumirInsumo({itemId:it.id, cantidad:cant, loteId:lote?.id||null}); }
-        else toast('Labor guardada. Ojo: no desconté "'+v._ins_nombre+'" (no está en bodega).');
+      const descontados=[], faltan=[];
+      for(let n=0; v[`_ins_${n}_nombre`]!==undefined; n++){
+        const nom=v[`_ins_${n}_nombre`], cant=v[`_ins_${n}_cant`], uni=v[`_ins_${n}_uni`];
+        if(!nom || !(parseFloat(cant)>0)) continue;
+        const it=await resolverProducto(nom);
+        if(!it){ faltan.push(nom); continue; }
+        const r=await consumirInsumo({itemId:it.id, cantidad:conv(cant, uni||it.unidad_medida, it.unidad_medida), loteId:lote?.id||null});
+        if(r.success) descontados.push(`${it.descripcion} -${Math.round(r.usado*100)/100} ${r.unidad}`); else faltan.push(`${nom} (${r.msg})`);
       }
-      return '📝 Labor registrada';
+      return '📝 Labor registrada' + (descontados.length ? `\n📦 Descontado de bodega: ${descontados.join(', ')}` : '') + (faltan.length ? `\n⚠️ No descontado (no está en bodega o sin stock): ${faltan.join(', ')}` : '');
     }
     case 'entrada':{
       const it=await resolverProducto(v.producto);
@@ -3098,6 +2739,7 @@ async function ejecutarAccion(v){
       const r=await consumirInsumo({itemId:it.id, cantidad:cant, loteId:lote?.id||null});
       return r.success?`📦 Salida: -${r.usado} ${r.unidad} de ${r.descripcion}${r.costo>0?' · '+fmtMoney(r.costo):''}`:('⚠️ '+r.msg);
     }
+    case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) S.cache.memoria.unshift({contenido:v.contenido, fecha:ahoraLocalISO()}); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
     case 'gasto':{ const lote=resolverLote(v.lote_codigo); await HANDLERS.add_gasto({concepto:v.concepto,categoria:v.categoria||'otro',valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return '💸 Gasto registrado'; }
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
     case 'jornal':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.registrar_jornal({trabajador:v.trabajador,dias:parseFloat(v.dias)||1,valor_dia:parseFloat(v.valor_dia)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return r.success?`👷 Jornal · ${fmtMoney(r.total)}`:('⚠️ '+r.msg); }
@@ -3108,63 +2750,6 @@ async function ejecutarAccion(v){
     case 'estado_lote':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ No encontré el lote'; const r=await HANDLERS.edit_lote(lote.id,{estado:v.estado}); return r.success?`🌱 ${lote.codigo} → ${v.estado}`:('⚠️ '+r.msg); }
     default: return '';
   }
-}
-
-/* Propuesta para lo que dijo el usuario: primero las reglas locales; la IA solo si no alcanzan */
-function propuestaSinIA(dominio, texto){
-  if (_pareceAPregunta(texto)) return { accion:'responder', texto:'Sin la IA no puedo contestar esa pregunta ahora. Sí puedo responder cuándo, cuánto y cuántas veces sobre lo registrado, y registrar lo que me digas.' };
-  const t = String(texto||'').trim();
-  if (dominio === 'bitacora') return { accion:'registrar_labor', actividad:_frase(t), fecha:hoyISO(), lote_codigo:null, insumo:null, resumen:'Revisa y completa' };
-  if (dominio === 'dinero')   return { accion:'gasto', concepto:_frase(t), valor:'', categoria:'otro', lote_codigo:null, fecha:hoyISO(), resumen:'Revisa y completa' };
-  if (dominio === 'tareas')   return { accion:'crear_tarea', titulo:_frase(t), fecha_limite:'', asignado:'todos', lote_codigo:null, resumen:'Revisa y completa' };
-  return null;
-}
-async function proponer(dominio, texto, media){
-  const ag = AGENTES[dominio];
-  if (ag?.local && !media) return { accion:'responder', texto: ag.local(texto) };
-  const local = (!media && texto) ? interpretarLocal(dominio, texto) : null;
-  if (local && local._seguro) return local;
-  if (iaDisponible()){
-    toast(`${ag.nombre} está pensando…`);
-    try{ const p = await parseAgente(dominio, texto, media); if (p) return p; }
-    catch(e){ /* sin red o sin cuota: seguimos sin IA */ }
-  }
-  if (media && !texto){ return { accion:'responder', texto:'Para leer fotos necesito la IA y ahora no está disponible. Escríbeme lo que pasó.' }; }
-  if (local) return local;
-  if (dominio === 'bodega' && texto){
-    const tipo = await M.select({ title:'¿Entrada o salida?', sub: esc(texto), options:[{value:'entrada',label:'Entró a bodega (compra)',icon:'ti-download'},{value:'salida',label:'Salió de bodega (uso)',icon:'ti-upload',color:'brown'}] });
-    if (!tipo) return null;
-    return interpretarLocal('bodega', (tipo === 'entrada' ? 'entró ' : 'usé ') + texto) || { accion:tipo, producto:'', cantidad:'', unidad:'', fecha:hoyISO(), resumen:'Revisa y completa' };
-  }
-  return propuestaSinIA(dominio, texto);
-}
-
-/* Atiende un mensaje para una sección. Devuelve {texto, consulta} o null si se canceló */
-async function atenderAgente(dominio, texto, media){
-  const prop = await proponer(dominio, texto, media);
-  if (!prop) return null;
-  if (prop.accion === 'informe'){ const inf = generarInforme(prop); return { texto: inf.texto, consulta:true, informe: inf }; }
-  if (prop.accion === 'consultar') return { texto: consultarRegistros(prop), consulta:true };
-  if (prop.accion === 'responder') return { texto: prop.texto || 'No tengo ese dato.', consulta:true };
-  const v = await confirmAccion(dominio, prop);
-  if (!v) return null;
-  try{ return { texto: await ejecutarAccion(v), consulta:false }; }
-  catch(e){ return { texto: '⚠️ Error: ' + e.message, consulta:false }; }
-}
-
-/* Flujo del agente de sección (barra de cada pestaña) */
-async function flowAgenteSeccion(dominio, texto, media){
-  if(!texto && !media) return;
-  const ag=AGENTES[dominio];
-  const r = await atenderAgente(dominio, texto, media);
-  if (!r){ return; }
-  if (r.informe){ abrirInforme(r.informe); return; }
-  if (r.consulta){
-    await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(r.texto).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:''});
-    return;
-  }
-  if (r.texto) toast(r.texto);
-  render();
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -3806,7 +3391,7 @@ function renderChatInterface(){
     if (m.mediaPreview) mediaHtml = m.mediaIsVideo ? `<video src="${m.mediaPreview}" class="media-prev" controls></video>` : `<img src="${m.mediaPreview}" class="media-prev">`;
     const isUser = m.role === 'user';
     const av = isUser ? `<div class="mrow-av user">${initial(S.user?.display)}</div>` : `<div class="mrow-av"><i class="ti ti-leaf"></i></div>`;
-    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div>${m.informe && m.informe.n ? `<button class="inf-btn" onclick="abrirInforme(${idx})"><i class="ti ti-table"></i> Ver informe${m.informe.n > 1 ? ' (' + m.informe.n + ')' : ''}</button>` : ''}</div></div>`;
+    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div>${m.informe && m.informe.n ? `<button class="inf-btn" onclick="abrirInforme(${idx})"><i class="ti ti-table"></i> Ver informe${m.informe.n > 1 ? ' (' + m.informe.n + ')' : ''}</button>` : ''}${m.preguntaIA ? `<button class="inf-btn" onclick="preguntarIA(${idx})"><i class="ti ti-sparkles"></i> Preguntar a la IA</button>` : ''}${m.boton ? `<button class="inf-btn" onclick="botonMensaje(${idx})"><i class="ti ${m.boton.icon||'ti-click'}"></i> ${esc(m.boton.label)}</button>` : ''}</div></div>`;
   }).join('') : '';
 
   const cameraBtn = `<button class="icb" id="btn-cam" title="Abrir cámara" style="border-color:var(--bl);background:#EEF4FC"><i class="ti ti-camera" style="color:var(--bl)"></i></button>`;
@@ -3816,7 +3401,7 @@ function renderChatInterface(){
   return `<div class="chat-wrap">
     <div class="chat-msgs" id="chat-msgs">
       ${proactive}
-      ${msgsHtml || (S.loading ? '' : emptyState('ti-leaf', 'Agente Operativo', 'Pídeme informes («dame las fechas de fumigación», «compras de este mes»), registra labores o programa tareas.'))}
+      ${msgsHtml || (S.loading ? '' : emptyState('ti-leaf', 'Asistente de la finca', 'Funciono sin IA: pídeme informes («informe de fumigaciones»), registra labores, gastos o jornales, o escribe «ayuda».'))}
       ${S.loading ? plantaPensando() : ''}
       <div id="chat-end"></div>
     </div>
@@ -5543,31 +5128,8 @@ function bindAppEvents(){
     hist.push({ role:'user', content: text || (S.pendImg?.isVideo ? '[Video]' : '[Foto]'), mediaPreview: S.pendImg?.preview, mediaIsVideo: S.pendImg?.isVideo });
     const mediaData = S.pendImg; S.pendImg = null; render();
     setTimeout(() => document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'}), 60);
-    // Respuesta local sin IA para consultas comunes (ahorra tokens). Solo si no hay foto.
-    // Primero sin IA: respuestas rápidas, preguntas sobre registros y registros comunes.
-    const local = !mediaData ? respuestaLocal(text) : null;
-    const informe = (!mediaData && !local) ? informeLocal(text) : null;
-    const dom = (!mediaData && !local && !informe) ? dominioDeTexto(text) : null;
-    const prop = dom ? interpretarLocal(dom, text) : null;
-    if (local){
-      hist.push({ role:'assistant', content: local });
-    } else if (informe){
-      hist.push({ role:'assistant', content: informe.texto, informe });
-    } else if (prop && (prop._seguro || !iaDisponible())){
-      S.loading = false; render();
-      const r = await atenderAgente(dom, text, null);
-      hist.push({ role:'assistant', content: r ? (r.texto || '✅ Hecho.') : 'Listo, no guardé nada.' });
-    } else if (!iaDisponible()){
-      hist.push({ role:'assistant', content: MSG_SIN_IA });
-    } else {
-      if (S.isOnline){ try{ await refreshAll(); } catch(e){} }
-      try{
-        let reply = await runGeminiEngine(hist.slice(0,-1), text || 'Analiza esto.', mediaData);
-        if (/^⚠️ (Error de red o cuota|Sin conexión)/.test(reply)) reply += '\n\n' + MSG_SIN_IA;
-        hist.push({ role:'assistant', content: reply });
-      }
-      catch(e){ hist.push({ role:'assistant', content:'⚠️ Error de red. Inténtalo de nuevo.' }); }
-    }
+    try{ await atenderChat(text, mediaData); }
+    catch(e){ console.error(e); hist.push({ role:'assistant', content:'⚠️ Algo falló: ' + e.message }); }
     if (mediaData && !mediaData.isVideo && S.isOnline){
       subirFoto(mediaData, { nota: (text || 'Foto enviada al agente').slice(0, 120) }).then(u => { if (u) toast('🖼️ Foto guardada en la galería'); }).catch(() => {});
     }
@@ -5682,15 +5244,25 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
         const newWorker = reg.installing;
         if (!newWorker) return;
         newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller){ showUpdateBanner(newWorker); }
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller){ aplicarActualizacion(newWorker); }
         });
       });
+      // Buscar versión nueva al abrir y cada vez que la app vuelve a primer plano
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
     }).catch(err => console.warn('SW registro fallo:', err));
     let refreshing = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (refreshing) return; refreshing = true; location.reload(); });
   });
 }
 
+/* Versión nueva: se aplica sola si no estás en medio de algo; si no, aparece el aviso */
+function aplicarActualizacion(worker){
+  const ocupado = () => S.loading || (document.getElementById('modal-host')?.innerHTML.trim()) || document.querySelector('input:focus, textarea:focus') || (document.getElementById('txt-inp')?.value || '').trim();
+  if (!ocupado()){ worker.postMessage({ type: 'SKIP_WAITING' }); return; }
+  showUpdateBanner(worker);
+  const reintento = setInterval(() => { if (!ocupado()){ clearInterval(reintento); worker.postMessage({ type: 'SKIP_WAITING' }); } }, 15000);
+}
 function showUpdateBanner(worker){
   if (document.querySelector('.update-banner')) return;
   const banner = document.createElement('div'); banner.className = 'update-banner';
