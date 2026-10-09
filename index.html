@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v11.1</title>
+<title>Finca El Retiro v11.2</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -121,6 +121,8 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .bbl-a{background:var(--s);border:1px solid var(--bd);border-bottom-left-radius:5px}
 .bbl-u{background:linear-gradient(180deg,#F0F8DF,var(--gl));border:1px solid var(--gb);border-bottom-right-radius:5px}
 .bbl-txt{font-size:13.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.rend-grid{display:grid !important;grid-template-columns:repeat(3,1fr);gap:6px}
+.rend-grid>div{min-width:0}
 .pleg{margin-top:10px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s);box-shadow:var(--sh-sm);overflow:hidden}
 .pleg-h{display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;user-select:none;-webkit-user-select:none}
 .pleg-h:active{background:var(--s2)}
@@ -975,7 +977,8 @@ const HANDLERS = {
   },
   create_lote: async (i) => {
     if (!i.codigo || !i.cultivo) return {success:false, msg:'Falta código o cultivo'};
-    const payload = { codigo:i.codigo, cultivo:i.cultivo, variedad:i.variedad||null, ambiente:i.ambiente||'abierto', estado:'planificación', activo:true, fecha_siembra:i.fecha_siembra||null, ciclo_dias:i.ciclo_dias||null, notas:i.notas||null };
+    const payload = { codigo:i.codigo, cultivo:i.cultivo, variedad:i.variedad||null, ambiente:i.ambiente||'abierto', estado:'planificación', activo:true, fecha_siembra:i.fecha_siembra||null, ciclo_dias:i.ciclo_dias||null, notas:i.notas||null,
+      siembra_cantidad: i.siembra_cantidad || null, siembra_unidad: i.siembra_cantidad ? (i.siembra_unidad || null) : null };
     if (!S.isOnline){ const _tmp='tmp-'+Date.now(); pushQueue({action:'create_lote', payload, tmpId:_tmp}); S.cache.lotes.push({...payload, id:_tmp}); return {success:true, msg:'Lote creado (offline)'}; }
     const { error } = await sb.from('lotes').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
@@ -1191,7 +1194,8 @@ const HANDLERS = {
   },
   registrar_cosecha: async (i) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar cosechas'};
-    const payload = { lote_id:i.lote_id||null, volumen_kg:i.kilos, calidad:i.calidad||'normal', observaciones:i.observaciones||null, fecha_recoleccion:i.fecha||fechaLocalISO(), registrado_por_id:S.user?.dbId||null };
+    const payload = { lote_id:i.lote_id||null, volumen_kg:i.kilos, calidad:i.calidad||'normal', observaciones:i.observaciones||null, fecha_recoleccion:i.fecha||fechaLocalISO(), registrado_por_id:S.user?.dbId||null,
+      unidad: i.unidad || null, unidades: i.unidades != null ? i.unidades : null, peso_unidad: i.peso_unidad != null ? i.peso_unidad : null };
     const { error } = await sb.from('cosechas').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
@@ -1836,10 +1840,20 @@ function interpretarLocal(dominio, texto){
   switch (dominio){
     case 'bitacora': {
       const f = _fecha(t, false), lote = _lote(t), fecha = fechaAgente(f?.fecha) || hoy;
+      const RX_EMP = new RegExp('\\b' + RX_NUM + '\\s*(canastillas?|canastas?|bultos?|medios?(?:\\s+bultos?)?|cajas?)\\b');
+      const emp = /cosech|recog|sacamos|sacaron|salieron|cogimos|cogieron/.test(t) && !_producto(t) && t.match(RX_EMP);
+      if (emp){
+        const unidad = _empaqueNorm(emp[2]), unidades = _numero(emp[1]);
+        const mp = t.slice(emp.index + emp[0].length).match(/^\s*(?:de|a|por)\s+(\d+(?:[.,]\d+)?)\s*(?:kilos?|kg)/);
+        const peso = mp ? _numero(mp[1]) : pesoSugerido(lote, unidad);
+        const kilos = peso ? Math.round(unidades * peso * 100) / 100 : '';
+        return { accion:'cosecha', unidad, unidades, peso_unidad: peso || '', kilos, calidad:'primera', observaciones:'', lote_codigo: lote?.codigo || null, fecha,
+          resumen:`Cosecha: ${_plural(unidades, unidad)}${kilos ? ' = ' + kilos.toLocaleString('es-CO') + ' kg' : ''}${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
+      }
       const kg = /cosech|recog|sacamos|sacaron/.test(t) && t.match(new RegExp('\\b' + RX_NUM + '\\s*(kilos?|kgs?|kilogramos?|arrobas?|toneladas?)\\b'));
       if (kg){
         const kilos = _numero(kg[1]) * (/^arroba/.test(kg[2]) ? 12.5 : /^tonelada/.test(kg[2]) ? 1000 : 1);
-        return { accion:'cosecha', kilos, calidad:'normal', observaciones:'', lote_codigo: lote?.codigo || null, fecha, resumen:`Cosecha de ${kilos.toLocaleString('es-CO')} kg${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
+        return { accion:'cosecha', unidad:'kg', unidades:kilos, peso_unidad:1, kilos, calidad:'primera', observaciones:'', lote_codigo: lote?.codigo || null, fecha, resumen:`Cosecha de ${kilos.toLocaleString('es-CO')} kg${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
       }
       const actividad = _frase(_quitar(texto, f));
       let insumos = productosDeLabor(texto).map(p => {
@@ -1923,6 +1937,7 @@ function dominioDeTexto(texto){
   if (/\b(crea\w*|nuevo|nueva|agreg\w*)\b.*\blote\b/.test(t) || (/\blote\b/.test(t) && new RegExp('\\b(' + Object.keys(ESTADOS_LOTE).join('|') + ')\\b').test(t) && /\b(pasa|paso|esta|entro|quedo|cambia|cambiar|ponlo|pon)\b/.test(t))) return 'cultivos';
   if (/\b(ya )?(termine|terminamos|complete|completamos|acabe|acabamos)\b/.test(t) && _tareaPendiente(t)) return 'tareas';
   if (/\b(vend\w*|venta|me pagaron|nos pagaron|cobr\w*)\b/.test(t)) return 'dinero';
+  if (/\b(sacamos|sacaron|salieron|cogimos|cogieron|recogimos|cosechamos)\b/.test(t) && /\b(canastillas?|canastas?|bultos?|medios?|cajas?|kilos?|kg)\b/.test(t) && !_producto(t)) return 'bitacora';
   if (RX_COMPRA.test(t) && _cantidad(t)) return 'bodega';
   if (/\b(gaste|pague|pagamos|compre|compramos|se pago|se compro)\b/.test(t) && _plata(t)) return 'dinero';
   if (RX_LABOR.test(t)) return 'bitacora';
@@ -1963,7 +1978,7 @@ async function llamarGemini(req){
    insumos en bodega" o "compras de este mes por categoría", y arma el
    listado completo con totales a partir de TODOS los registros.
    ═══════════════════════════════════════════════════════════════ */
-const RX_PIDE = /^(y\s+)?(por favor\s+)?(en (que|donde)|donde|rentabilidad|cual (es|fue) (el|la)|como (vamos|va|nos fue|esta la finca|van)|(el |los )?productos? mas|dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
+const RX_PIDE = /^(y\s+)?(por favor\s+)?(en (que|donde)|donde|rentabilidad|rendimiento|cual (es|fue) (el|la)|como (vamos|va|nos fue|esta la finca|van)|(el |los )?productos? mas|dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
 const RX_TEMAS = '(insumos|productos|compras|gastos|jornales|cosechas|fumigaciones|fertilizaciones|abonadas|podas|riegos|labores|tareas|ventas|ingresos|aplicaciones|inventario|plagas|lotes|salidas|consumos)';
 const RX_FUERTE = new RegExp('\\b(lista|listado|listar|informe|reporte|resumen|historial|inventario|ultima vez|primera vez|hace cuanto|cuantas veces)\\b|\\b' + RX_TEMAS +
   '\\b.*\\b(este mes|esta semana|del mes|mes pasado|semana pasada|este ano|ano pasado|por (lote|mes|categoria|producto|trabajador)|' + MESES.join('|') + ')\\b');
@@ -2092,7 +2107,7 @@ const FUENTES_INF = {
   cosechas: { titulo:'Cosechas', unidad:'kg', fechas:true,
     cols:[['fecha','Fecha'],['lote','Lote'],['kgTxt','Kilos'],['calidad','Calidad'],['obs','Notas']],
     filas:() => (S.cache.cosechas||[]).map(c => _fila2(c.fecha_recoleccion, [c.calidad, c.observaciones, 'cosecha'], c.lote_id,
-      { fecha:_fechaCorta(c.fecha_recoleccion), lote:c.lote?.codigo || _codLote(c.lote_id), kg:_num(c.volumen_kg), kgTxt:`${_num(c.volumen_kg).toLocaleString('es-CO')} kg`, calidad:c.calidad || 'normal', obs:c.observaciones || '' })),
+      { fecha:_fechaCorta(c.fecha_recoleccion), lote:c.lote?.codigo || _codLote(c.lote_id), kg:_num(c.volumen_kg), kgTxt: textoCosecha(c), calidad:c.calidad || 'normal', obs:c.observaciones || '' })),
     linea: f => `• ${f.fecha} · ${f.lote} · ${f.kgTxt} (${f.calidad})${f.obs ? ' · ' + f.obs : ''}` },
   ingresos: { titulo:'Ingresos y ventas', unidad:'$', fechas:true, sinLote:true,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['valor','Valor']],
@@ -2110,12 +2125,14 @@ const FUENTES_INF = {
       { fecha:_fechaCorta(p.fecha_deteccion || p.creado_en), lote:p.lote?.codigo || 'Finca', plaga:p.tipo || '', severidad:p.severidad || 'leve', trat:p.producto_usado || '', estado:p.activa ? 'activa' : 'controlada', activa:!!p.activa })),
     linea: f => `• ${f.fecha} · ${f.lote} · ${f.plaga} (${f.severidad})${f.trat ? ' · tratada con ' + f.trat : ''} · ${f.estado}` },
   lotes: { titulo:'Lotes', unidad:'$', fechas:false,
-    cols:[['lote','Lote'],['cultivo','Cultivo'],['estado','Estado'],['siembra','Siembra'],['kgTxt','Cosechado'],['valor','Costo'],['costoKg','Costo/kg']],
+    cols:[['lote','Lote'],['cultivo','Cultivo'],['estado','Estado'],['siembra','Siembra'],['sembrado','Sembrado'],['kgTxt','Cosechado'],['rend','Rendimiento'],['valor','Costo'],['costoKg','Costo/kg']],
     filas:() => (S.cache.lotes||[]).map(l => { const kg = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id).reduce((a,c) => a + _num(c.volumen_kg), 0);
       return { dia:'', orden:0, lote_id:l.id, texto:_normTxt([l.codigo, l.cultivo, l.variedad, l.estado].join(' ')), lote:l.codigo, cultivo:[l.cultivo, l.variedad].filter(Boolean).join(' '), estado:l.estado || '',
         siembra:l.fecha_siembra ? `${_fechaCorta(l.fecha_siembra)} (${diasDesde(l.fecha_siembra)} d)` : '—', kg, kgTxt: kg ? `${kg.toLocaleString('es-CO')} kg` : '—', valor:costoLote(l.id),
-        costoKg: kg && costoLote(l.id) ? fmtMoney(costoLote(l.id) / kg) : '—' }; }),
-    linea: f => `• ${f.lote} · ${f.cultivo} · ${f.estado} · siembra ${f.siembra}${f.kg ? ' · ' + f.kgTxt : ''}${f.valor ? ' · costo ' + fmtMoney(f.valor) : ''}${f.costoKg !== '—' ? ' · ' + f.costoKg + '/kg' : ''}` },
+        costoKg: kg && costoLote(l.id) ? fmtMoney(costoLote(l.id) / kg) : '—',
+        sembrado: l.siembra_cantidad ? _plural(parseFloat(l.siembra_cantidad), l.siembra_unidad || perfilCultivo(l).siembra) : '—',
+        rend: (l.siembra_cantidad && kg) ? rendimientoLote(l).resumen : '—' }; }),
+    linea: f => `• ${f.lote} · ${f.cultivo} · ${f.estado} · siembra ${f.siembra}${f.kg ? ' · ' + f.kgTxt : ''}${f.valor ? ' · costo ' + fmtMoney(f.valor) : ''}${f.costoKg !== '—' ? ' · ' + f.costoKg + '/kg' : ''}${f.rend !== '—' ? ' · rinde ' + f.rend : ''}` },
 };
 
 /* Entiende el pedido. Devuelve la especificación del informe o null (null = no es un pedido de informe) */
@@ -2134,11 +2151,12 @@ function entenderInforme(texto){
   else if (/\bjornal|mano de obra|\btrabajador/.test(t)) fuente = 'jornales';
   else if (/\b(salidas?|consumos?|descontad\w*)\b/.test(t)) fuente = 'salidas';
   else if (/\b(productos?|insumos?|dosis)\b.*\b(aplicad\w*|usad\w*|echad\w*)\b/.test(t) || (/\b(cuant[oa]|cantidad|total)\b/.test(t) && /\b(aplicad\w*|usad\w*|echad\w*|gastad\w*)\b/.test(t) && hayProductoAplicado())) fuente = 'aplicaciones';
+  else if (/rendimiento|rentabilidad|\bpor (planta|mata|libra|papeleta)\b/.test(t)) fuente = 'lotes';
   else if (/cosech|produccion|produjo|\bkilos\b/.test(t)) fuente = 'cosechas';
   else if (/\bvent|\bvend|\bingres/.test(t)) fuente = 'ingresos';
   else if (/plaga|enfermedad/.test(t)) fuente = 'plagas';
   else if (/\btareas?\b|\bpendientes?\b/.test(t)) fuente = 'tareas';
-  else if (/rentabilidad|costo por kilo|cuanto (cuesta|sale|vale) (producir|el kilo)|ganancia|utilidad/.test(t)) fuente = 'lotes';
+  else if (/rentabilidad|rendimiento|costo por kilo|por planta|por mata|por libra|por papeleta|cuanto (cuesta|sale|vale) (producir|el kilo)|ganancia|utilidad/.test(t)) fuente = 'lotes';
   else if (/gast|egreso|\bpagos?\b|pague|plata|dinero|\bcost|invert/.test(t)) fuente = 'gastos';
   else if (RX_LABOR.test(t) || /\b(labor|labores|bitacora|actividad|actividades|trabajos|se hizo|hicimos|hizo|hecho)\b/.test(t)) fuente = 'labores';
   else if (/\b(lotes|cultivos)\b/.test(t)) fuente = 'lotes';
@@ -2152,7 +2170,7 @@ function entenderInforme(texto){
   else if (!lista && (/^(y\s+)?cuando\b|\bultima vez\b|\bhace cuanto\b|\bcuando fue\b/.test(t))) op = 'ultimo';
   else if (!lista && (/cuantas veces/.test(t) || (/\bcuant[oa]s\b/.test(t) && !/cuant[oa]s (kilos|pesos)/.test(t)))) op = 'contar';
   else if (!lista && /\bcuant[oa]\b|\btotal\b|\bsuma\b/.test(t)) op = 'total';
-  if (fuente === 'inventario' && op !== 'lista') op = 'lista';
+  if ((fuente === 'inventario' || fuente === 'lotes') && op !== 'lista') op = 'lista';
 
   const g = t.match(/\bpor (lote|lotes|mes|meses|trabajador|trabajadores|persona|categoria|categorias|producto|productos|proveedor)\b/);
   const g2 = !g && t.match(/\b(?:en )?(?:que|cual|cuales) (lote|lotes|mes|meses|trabajador|trabajadores|categoria|categorias|producto|productos)\b/);
@@ -2173,7 +2191,7 @@ function entenderInforme(texto){
     ? (nombresTrab.find(n => { const k = _normTxt(n).trim(); return k.length >= 3 && new RegExp('\\b' + _rxEsc(k) + '\\b').test(t0); }) || null) : null;
 
   const quitar = new Set();
-  if (lote) [_normTxt(lote.codigo), ...(_normTxt(lote.codigo).match(/[a-z0-9]+/g)||[])].forEach(w => quitar.add(w));
+  if (lote) [_normTxt(lote.codigo), ...(_normTxt([lote.codigo, lote.cultivo, lote.variedad].join(' ')).match(/[a-z0-9]+/g)||[])].forEach(w => quitar.add(w));
   if (persona) (_normTxt(persona).match(/[a-z0-9]+/g)||[]).forEach(w => quitar.add(w));
   const palabras = t.split(' ').filter(w => w.length >= 4 && !STOP_INFORME.has(w) && !quitar.has(w) && !/^\d+$/.test(w) && !MESES.includes(w) && !DIAS_SEM.includes(w)
     && !(categoria && CAT_PALABRAS.some(([rx]) => rx.test(w))) && !(fuente === 'cosechas' && /^(cosech|kilo|produc)/.test(w))
@@ -2676,7 +2694,8 @@ function camposDe(prop){
     case 'crear_tarea': return [{k:'titulo',label:'Tarea',type:'text',v:prop.titulo||''},{k:'fecha_limite',label:'Fecha límite',type:'date',v:prop.fecha_limite||''},{k:'asignado',label:'Asignado a',type:'select',v:prop.asignado||'todos',options:userOpts},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
     case 'completar_tarea': return [{k:'titulo',label:'Tarea a completar',type:'text',v:prop.titulo||''}];
     case 'apunte': return [{k:'contenido',label:'Apunte para recordar',type:'text',v:prop.contenido||''}];
-    case 'cosecha': return [{k:'kilos',label:'Kilos',type:'number',v:prop.kilos||''},{k:'calidad',label:'Calidad',type:'select',v:prop.calidad||'normal',options:[{value:'primera',label:'Primera'},{value:'normal',label:'Normal'},{value:'segunda',label:'Segunda'}]},
+    case 'cosecha': return [{k:'unidad',label:'¿En qué se sacó?',type:'select',v:prop.unidad||'kg',options:EMPAQUES.map(e=>({value:e,label:e==='kg'?'Kilos sueltos':e}))},
+      {k:'unidades',label:'¿Cuántas? (o kilos si es «Kilos sueltos»)',type:'number',v:prop.unidades||prop.kilos||''},{k:'peso_unidad',label:'Peso de cada una (kg)',type:'number',v:prop.peso_unidad||''},{k:'calidad',label:'Calidad',type:'select',v:prop.calidad||'normal',options:[{value:'primera',label:'Primera'},{value:'normal',label:'Normal'},{value:'segunda',label:'Segunda'}]},
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'observaciones',label:'Observaciones',type:'text',v:prop.observaciones||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_lote': return [{k:'codigo',label:'Código',type:'text',v:prop.codigo||''},{k:'cultivo',label:'Cultivo',type:'text',v:prop.cultivo||''},{k:'variedad',label:'Variedad',type:'text',v:prop.variedad||''}];
     case 'estado_lote': return [{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'estado',label:'Estado',type:'select',v:prop.estado||'',options:['planificación','siembra','vegetativo','producción','cosecha','descanso'].map(e=>({value:e,label:e}))}];
@@ -2757,7 +2776,10 @@ async function ejecutarAccion(v){
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
     case 'jornal':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.registrar_jornal({trabajador:v.trabajador,dias:parseFloat(v.dias)||1,valor_dia:parseFloat(v.valor_dia)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return r.success?`👷 Jornal · ${fmtMoney(r.total)}`:('⚠️ '+r.msg); }
     case 'crear_tarea':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.create_task({titulo:v.titulo,fecha_limite:v.fecha_limite||null,asignado_a:v.asignado||'todos',lote_id:lote?.id||null}); return r.success?'📋 Tarea programada':('⚠️ '+r.msg); }
-    case 'cosecha':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ Elige el lote de la cosecha'; const r=await HANDLERS.registrar_cosecha({lote_id:lote.id,kilos:parseFloat(v.kilos)||0,calidad:v.calidad||'normal',observaciones:v.observaciones||null,fecha:fechaAgente(v.fecha)||null}); return r.success?`🧺 Cosecha: ${(parseFloat(v.kilos)||0).toLocaleString('es-CO')} kg en ${lote.codigo}`:('⚠️ '+r.msg); }
+    case 'cosecha':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ Elige el lote de la cosecha';
+      const k=_cosechaDeForm(v, lote); if(!k) return '⚠️ Falta cuántas se sacaron'; if(k.falta) return '⚠️ Falta el peso de cada '+_empaqueNorm(v.unidad);
+      const r=await HANDLERS.registrar_cosecha({lote_id:lote.id,...k,calidad:v.calidad||'primera',observaciones:v.observaciones||null,fecha:fechaAgente(v.fecha)||null});
+      return r.success?`🧺 Cosecha: ${k.unidad==='kg'?'':_plural(k.unidades,k.unidad)+' = '}${k.kilos.toLocaleString('es-CO')} kg en ${lote.codigo}`:('⚠️ '+r.msg); }
     case 'completar_tarea':{ const tk=_norm(v.titulo); const t=(S.cache.tasks||[]).find(x=>x.estado==='pendiente'&&_norm(x.titulo).includes(tk)); if(!t) return '⚠️ No encontré esa tarea'; await HANDLERS.complete_task(t.id); return '✅ Tarea completada'; }
     case 'crear_lote':{ const r=await HANDLERS.create_lote({codigo:v.codigo,cultivo:v.cultivo,variedad:v.variedad||null}); return r.success?'🌱 Lote creado':('⚠️ '+r.msg); }
     case 'estado_lote':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ No encontré el lote'; const r=await HANDLERS.edit_lote(lote.id,{estado:v.estado}); return r.success?`🌱 ${lote.codigo} → ${v.estado}`:('⚠️ '+r.msg); }
@@ -3496,6 +3518,91 @@ function renderBitacora(){
     <div class="card">${list}</div></div>`;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   RENDIMIENTO: lo sembrado (plantas, libras, papeletas) contra lo
+   cosechado (canastillas, bultos, medios… con su peso)
+   ═══════════════════════════════════════════════════════════════ */
+/* Cómo se siembra y se empaca cada cultivo (solo sugerencias: todo se puede cambiar) */
+const PERFIL_CULTIVO = [
+  { rx:/tomate/, siembra:'plantas', empaque:'canastilla', peso:22 },
+  { rx:/cebolla/, siembra:'libras', empaque:'bulto', peso:50 },
+  { rx:/repollo|\bcol\b/, siembra:'papeletas', empaque:'bulto', peso:null },
+  { rx:/frijol|arveja|habichuela/, siembra:'kg', empaque:'kg', peso:1 },
+];
+const UNIDADES_SIEMBRA = ['plantas','libras','papeletas','sobres','kg','gramos'];
+const EMPAQUES = ['canastilla','bulto','medio bulto','caja','arroba','kg'];
+function perfilCultivo(l){ const c = _normTxt(l?.cultivo || ''); return PERFIL_CULTIVO.find(p => p.rx.test(c)) || { siembra:'plantas', empaque:'kg', peso:1 }; }
+function _empaqueNorm(u){
+  const t = _normTxt(u).trim();
+  if (/^medio/.test(t)) return 'medio bulto';
+  if (/^canast/.test(t)) return 'canastilla';
+  if (/^bult/.test(t)) return 'bulto';
+  if (/^caj/.test(t)) return 'caja';
+  if (/^arrob/.test(t)) return 'arroba';
+  if (/^(kg|kilo)/.test(t)) return 'kg';
+  return t || 'kg';
+}
+/* Peso sugerido de una unidad para un lote: el de su última cosecha con esa unidad, o el del cultivo */
+function pesoSugerido(l, unidad){
+  unidad = _empaqueNorm(unidad);
+  if (unidad === 'kg') return 1;
+  if (unidad === 'arroba') return 12.5;
+  const prev = (S.cache.cosechas || []).filter(c => c.lote_id === l?.id && _empaqueNorm(c.unidad) === unidad && parseFloat(c.peso_unidad) > 0)
+    .sort((a,b) => tsOrden(b.fecha_recoleccion) - tsOrden(a.fecha_recoleccion))[0];
+  if (prev) return parseFloat(prev.peso_unidad);
+  const pf = perfilCultivo(l);
+  if (unidad === 'medio bulto'){ const b = pesoSugerido(l, 'bulto'); return b ? b / 2 : null; }
+  return pf.empaque === unidad ? pf.peso : null;
+}
+const _SING = { plantas:'planta', libras:'libra', papeletas:'papeleta', sobres:'sobre', gramos:'gramo', canastillas:'canastilla', bultos:'bulto', cajas:'caja', arrobas:'arroba' };
+const _PLUR = { canastilla:'canastillas', bulto:'bultos', 'medio bulto':'medios bultos', caja:'cajas', arroba:'arrobas', planta:'plantas', libra:'libras', papeleta:'papeletas', sobre:'sobres', gramo:'gramos' };
+/* "36 canastillas", "1 libra", "3 medios bultos" */
+function _plural(n, u){
+  const num = (Math.round(n * 100) / 100).toLocaleString('es-CO');
+  if (u === 'kg') return `${num} kg`;
+  const base = _SING[u] || u;
+  return `${num} ${n === 1 ? base : (_PLUR[base] || base + 's')}`;
+}
+/* Texto de una cosecha: "36 canastillas × 22 kg = 792 kg" */
+function textoCosecha(c){
+  const kg = parseFloat(c.volumen_kg) || 0, u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad);
+  if (u > 0 && un !== 'kg') return `${_plural(u, un)} × ${(parseFloat(c.peso_unidad)||0).toLocaleString('es-CO')} kg = ${kg.toLocaleString('es-CO')} kg`;
+  return `${kg.toLocaleString('es-CO')} kg`;
+}
+/* Rendimiento de un lote: totales por empaque, kg y lo que rinde cada planta / libra / papeleta */
+function rendimientoLote(l){
+  const cs = (S.cache.cosechas || []).filter(c => c.lote_id === l.id);
+  const kg = cs.reduce((a,c) => a + (parseFloat(c.volumen_kg)||0), 0);
+  const porEmpaque = {}; let sinUnidades = 0, kgSinUnidades = 0;
+  cs.forEach(c => {
+    const u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad);
+    if (u > 0 && un !== 'kg') porEmpaque[un] = (porEmpaque[un] || 0) + u;
+    else { sinUnidades++; kgSinUnidades += parseFloat(c.volumen_kg)||0; }
+  });
+  const pf = perfilCultivo(l);
+  // Cosechas viejas guardadas solo en kilos: se estiman con el peso de la unidad del lote
+  let estimadas = 0;
+  if (sinUnidades && pf.empaque !== 'kg'){ const p = pesoSugerido(l, pf.empaque); if (p) estimadas = kgSinUnidades / p; }
+  const bultosEq = (porEmpaque['bulto'] || 0) + (porEmpaque['medio bulto'] || 0) / 2;
+  const sembrado = parseFloat(l.siembra_cantidad) || 0, uniS = l.siembra_unidad || pf.siembra;
+  const costo = costoLote(l.id);
+  const unidadSing = { plantas:'planta', libras:'libra', papeletas:'papeleta', sobres:'sobre', kg:'kg de semilla', gramos:'gramo' }[uniS] || uniS;
+  const datos = [];
+  datos.push([`${kg.toLocaleString('es-CO', { maximumFractionDigits:1 })} kg`, 'Cosechado']);
+  Object.entries(porEmpaque).forEach(([un, n]) => { const pl = _PLUR[un] || un + 's'; datos.push([(Math.round(n*100)/100).toLocaleString('es-CO'), pl[0].toUpperCase() + pl.slice(1)]); });
+  if (estimadas) datos.push([`≈ ${Math.round(estimadas).toLocaleString('es-CO')}`, `${(p => p[0].toUpperCase() + p.slice(1))(_PLUR[pf.empaque] || pf.empaque)} (de registros en kg)`]);
+  if (sembrado){
+    datos.push([`${(Math.round(kg / sembrado * 100) / 100).toLocaleString('es-CO')} kg`, `Por ${unidadSing}`]);
+    if (uniS !== 'plantas' && bultosEq) datos.push([`${(Math.round(bultosEq / sembrado * 10) / 10).toLocaleString('es-CO')}`, `Bultos por ${unidadSing}`]);
+    if (uniS === 'plantas'){ const cans = (porEmpaque['canastilla'] || 0) + (pf.empaque === 'canastilla' ? estimadas : 0); if (cans) datos.push([`${(Math.round(sembrado / cans * 10) / 10).toLocaleString('es-CO')}`, 'Plantas por canastilla']); }
+  }
+  if (costo > 0 && kg > 0) datos.push([fmtMoney(costo / kg), 'Costo por kg']);
+  if (costo > 0 && bultosEq) datos.push([fmtMoney(costo / bultosEq), 'Costo por bulto']);
+  if (costo > 0) datos.push([fmtMoney(costo), 'Invertido']);
+  return { cs, kg, porEmpaque, bultosEq, estimadas, sembrado, uniS, unidadSing, datos, costo,
+    resumen: !sembrado ? '' : `${uniS !== 'plantas' && bultosEq ? (Math.round(bultosEq / sembrado * 10) / 10).toLocaleString('es-CO') + ' bultos/' + unidadSing + ' · ' : ''}${(Math.round(kg / sembrado * 100) / 100).toLocaleString('es-CO')} kg/${unidadSing}` };
+}
+
 /* Sección desplegable: se toca el título para abrir o cerrar. El teléfono recuerda cómo la dejaste. */
 const PLEG_KEY = 'finca_plegables';
 function _plegEstado(){ try{ return JSON.parse(localStorage.getItem(PLEG_KEY) || '{}') || {}; }catch(e){ return {}; } }
@@ -3580,12 +3687,12 @@ function renderCultivos(){
         };
         const esFumig = b => /fumig|asperj|fungicid|insecticid|herbicid|acaricid/i.test(_normTxt(b.actividad));
         const esFerti = b => !esFumig(b) && /fertiliz|abon|calcio|foliar|drench|nutri|fertirrig|enmienda|\bcal\b/i.test(_normTxt(b.actividad));
+        bit.sort((a, b) => tsOrden(b.fecha) - tsOrden(a.fecha));
         const grupos = [
           ['lote-fumigaciones', 'ti-spray', 'Fumigaciones', bit.filter(esFumig)],
           ['lote-fertilizaciones', 'ti-seeding', 'Fertilizaciones y abonadas', bit.filter(esFerti)],
           ['lote-labores', 'ti-notebook', 'Otras labores', bit.filter(b => !esFumig(b) && !esFerti(b))],
         ];
-        bit.sort((a, b) => tsOrden(b.fecha) - tsOrden(a.fecha));
         if (!bit.length) return plegable('lote-labores', `<i class="ti ti-notebook"></i> Bitácora del lote`, `<div class="card">${emptyState('ti-notebook','Sin registros','Aún no hay labores anotadas.')}</div>`, { resumen:'0' });
         return grupos.map(([id, ic, nom, lista]) => plegable(id, `<i class="ti ${ic}"></i> ${nom}`,
           lista.length ? `<div class="card">${lista.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin registros.</div>`,
@@ -3596,10 +3703,12 @@ function renderCultivos(){
         const btnCos = `<button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button>`;
         if (!cs.length) return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote.</div>`, { resumen:'0', acciones: btnCos });
         const totalKg = cs.reduce((a,c)=>a+(parseFloat(c.volumen_kg)||0),0);
-        const costoL = (S.cache.compras||[]).filter(c=>c.lote_id===l.id).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
-        const resumen = `<div class="map-dims" style="margin-bottom:8px"><div><b>${totalKg.toLocaleString('es-CO')} kg</b>Cosechado</div>${costoL>0?`<div><b>${fmtMoney(costoL/totalKg)}</b>Costo por kg</div><div><b>${fmtMoney(costoL)}</b>Invertido</div>`:''}</div>`;
-        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${c.volumen_kg} kg · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
-          { resumen: `${cs.length} · ${totalKg.toLocaleString('es-CO')} kg`, acciones: btnCos });
+        const R = rendimientoLote(l);
+        const sembradoTxt = R.sembrado ? `Sembrado: <b>${_plural(R.sembrado, R.uniS)}</b>` : `Falta decir cuánto se sembró (${R.uniS}) para calcular el rendimiento.`;
+        const resumen = `<div class="spec-box" style="margin-bottom:8px;display:flex;align-items:center;gap:8px"><span style="flex:1">${sembradoTxt}</span><button class="btn btn-sm btn-soft" onclick="flowSiembraLote('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-edit"></i> ${R.sembrado ? 'Cambiar' : 'Agregar'}</button></div>
+          <div class="map-dims rend-grid" style="margin-bottom:8px">${R.datos.map(([v, t]) => `<div><b>${v}</b>${t}</div>`).join('')}</div>`;
+        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${textoCosecha(c)} · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
+          { resumen: `${totalKg.toLocaleString('es-CO')} kg${R.resumen ? ' · ' + R.resumen : ''}`, acciones: btnCos });
       })()}
       ${(() => {
         const todas = (S.cache.fotos||[]).filter(f => f.lote_id === l.id), fs = todas.slice(0,6);
@@ -4254,13 +4363,17 @@ window.flowEditLote = async function(id){
       { name:'cultivo', label:'Cultivo', type:'text', required:true, initial: lote.cultivo },
       { name:'variedad', label:'Variedad (opcional)', type:'text', initial: lote.variedad||'' },
       { name:'fecha_siembra', label:'Fecha de siembra', type:'date', initial: lote.fecha_siembra||'' },
-      { name:'ciclo_dias', label:'Ciclo de cultivo', type:'select', options: cicloOpts },
-      { name:'estado', label:'Estado', type:'select', options: estadoOpts },
-      { name:'ambiente', label:'Ambiente', type:'select', options: ambienteOpts }
+      { name:'siembra_cantidad', label:'¿Cuánto se sembró? (plantas, libras, papeletas…)', type:'number', initial: lote.siembra_cantidad != null ? String(lote.siembra_cantidad) : '' },
+      { name:'siembra_unidad', label:'Unidad de siembra', type:'select', options: UNIDADES_SIEMBRA.map(u => ({ value:u, label:u })), initial: lote.siembra_unidad || perfilCultivo(lote).siembra },
+      { name:'ciclo_dias', label:'Ciclo de cultivo', type:'select', options: cicloOpts, initial: lote.ciclo_dias ? String(lote.ciclo_dias) : '' },
+      { name:'estado', label:'Estado', type:'select', options: estadoOpts, initial: lote.estado || 'planificación' },
+      { name:'ambiente', label:'Ambiente', type:'select', options: ambienteOpts, initial: lote.ambiente || 'abierto' }
     ]
   });
   if (!r) return;
-  const resp = await HANDLERS.edit_lote(id, { codigo:r.codigo, cultivo:r.cultivo, variedad:r.variedad||null, fecha_siembra:r.fecha_siembra||null, ciclo_dias:r.ciclo_dias?parseInt(r.ciclo_dias):null, estado:r.estado, ambiente:r.ambiente });
+  const resp = await HANDLERS.edit_lote(id, { codigo:r.codigo, cultivo:r.cultivo, variedad:r.variedad||null, fecha_siembra:r.fecha_siembra||null, ciclo_dias:r.ciclo_dias?parseInt(r.ciclo_dias):null, estado:r.estado, ambiente:r.ambiente,
+    siembra_cantidad: parseFloat(r.siembra_cantidad) || null, siembra_unidad: r.siembra_unidad || null });
+  if (resp.success && S.activeLote?.id == id) S.activeLote = S.cache.lotes.find(x => x.id == id) || S.activeLote;
   toast(resp.success ? '✅ Lote actualizado' : resp.msg); if (resp.success) render();
 };
 
@@ -4514,11 +4627,13 @@ async function flowNewLote(){
     { name:'cultivo', label:'Cultivo principal', type:'text', required:true },
     { name:'variedad', label:'Variedad (opcional)', type:'text' },
     { name:'fecha_siembra', label:'Fecha de siembra (opcional)', type:'date' },
+    { name:'siembra_cantidad', label:'¿Cuánto se sembró? (opcional: plantas, libras, papeletas…)', type:'number' },
+    { name:'siembra_unidad', label:'Unidad de siembra', type:'select', options: UNIDADES_SIEMBRA.map(u => ({ value:u, label:u })) },
     { name:'ciclo_dias', label:'Ciclo de cultivo', type:'select', options:cicloOpts },
     { name:'ambiente', label:'Ambiente', type:'select', options:[{value:'abierto',label:'Abierto'},{value:'cubierto',label:'Cubierto (invernadero)'}] }
   ]});
   if (!r) return;
-  const resp = await HANDLERS.create_lote({ ...r, ciclo_dias: r.ciclo_dias ? parseInt(r.ciclo_dias) : null, fecha_siembra: r.fecha_siembra || null });
+  const resp = await HANDLERS.create_lote({ ...r, ciclo_dias: r.ciclo_dias ? parseInt(r.ciclo_dias) : null, fecha_siembra: r.fecha_siembra || null, siembra_cantidad: parseFloat(r.siembra_cantidad) || null });
   toast(resp.msg); render();
 }
 
@@ -4563,14 +4678,13 @@ window.flowDeleteJornal = async function(id){
 };
 window.flowEditCosecha = async function(id){
   const c = S.cache.cosechas.find(x => x.id == id); if (!c) return;
-  const r = await M.form({ title:'Editar cosecha', okText:'Guardar cambios', fields:[
-    { name:'kilos', label:'Kilos', type:'number', required:true, initial:String(c.volumen_kg) },
-    { name:'calidad', label:'Calidad', type:'select', options:[{value:'primera',label:'Primera'},{value:'segunda',label:'Segunda'},{value:'normal',label:'Normal'}], initial:c.calidad||'normal' },
-    { name:'observaciones', label:'Observaciones', type:'text', initial:c.observaciones||'' },
-    { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: toDateInput(c.fecha_recoleccion) }
-  ]});
+  const l = S.cache.lotes.find(x => x.id == c.lote_id);
+  const r = await M.form({ title:'Editar cosecha', sub:'Los kilos se calculan: cantidad × peso de cada una.', okText:'Guardar cambios', fields: _camposCosecha(l, c) });
   if (!r) return;
-  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:parseFloat(r.kilos), calidad:r.calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null });
+  const k = _cosechaDeForm(r, l);
+  if (!k){ toast('Escribe cuántas se sacaron'); return; }
+  if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
+  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:k.kilos, unidad:k.unidad, unidades:k.unidades, peso_unidad:k.peso_unidad, calidad:r.calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null });
   toast(resp.success ? '✅ Cosecha actualizada' : resp.msg); if (resp.success) render();
 };
 window.flowDeleteCosecha = async function(id){
@@ -4603,16 +4717,50 @@ window.flowEditFotoNota = async function(id){
   toast(r.success ? '✅ Nota actualizada' : r.msg); if (r.success) render();
 };
 
+/* Formulario de cosecha por empaque: unidad, cuántas y peso de cada una → kilos */
+function _camposCosecha(l, c = {}){
+  const ult = (S.cache.cosechas || []).filter(x => x.lote_id === l?.id && x.unidad).sort((a,b) => tsOrden(b.fecha_recoleccion) - tsOrden(a.fecha_recoleccion))[0];
+  const unidad = c.unidad ? _empaqueNorm(c.unidad) : (ult ? _empaqueNorm(ult.unidad) : perfilCultivo(l).empaque);
+  const peso = c.peso_unidad || pesoSugerido(l, unidad) || '';
+  return [
+    { name:'unidad', label:'¿En qué se sacó?', type:'select', options: EMPAQUES.map(e => ({ value:e, label: e === 'kg' ? 'Kilos sueltos' : e[0].toUpperCase() + e.slice(1) })), initial: unidad },
+    { name:'unidades', label:'¿Cuántas? (canastillas, bultos… o kilos si es «Kilos sueltos»)', type:'number', required:true, initial: c.unidades != null ? String(c.unidades) : (c.volumen_kg && !c.unidad ? String(c.volumen_kg) : ''), placeholder:'Ej: 36' },
+    { name:'peso_unidad', label:'Peso de cada una (kg) · no aplica para kilos sueltos', type:'number', initial: peso ? String(peso) : '', placeholder:'Ej: 22' },
+    { name:'calidad', label:'Calidad', type:'select', options:[{value:'primera',label:'Primera'},{value:'segunda',label:'Segunda'},{value:'normal',label:'Normal'}], initial: c.calidad || 'primera' },
+    { name:'observaciones', label:'Observaciones (opcional)', type:'text', initial: c.observaciones || '' },
+    { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: c.fecha_recoleccion ? toDateInput(c.fecha_recoleccion) : hoyISO() }
+  ];
+}
+/* Convierte lo del formulario en kilos y datos de empaque. Devuelve null si falta el peso */
+function _cosechaDeForm(r, l){
+  const unidad = _empaqueNorm(r.unidad), n = parseFloat(r.unidades) || 0;
+  if (!(n > 0)) return null;
+  if (unidad === 'kg') return { kilos:n, unidad:'kg', unidades:n, peso_unidad:1 };
+  const peso = parseFloat(r.peso_unidad) || pesoSugerido(l, unidad);
+  if (!(peso > 0)) return { falta:'peso' };
+  return { kilos: Math.round(n * peso * 100) / 100, unidad, unidades:n, peso_unidad:peso };
+}
 window.flowNuevaCosecha = async function(loteId, codigo){
-  const r = await M.form({ title:`Registrar cosecha${codigo?' · '+codigo:''}`, okText:'Guardar', fields:[
-    { name:'kilos', label:'Kilos cosechados', type:'number', required:true, placeholder:'Ej: 120' },
-    { name:'calidad', label:'Calidad', type:'select', options:[{value:'primera',label:'Primera'},{value:'segunda',label:'Segunda'},{value:'normal',label:'Normal'}] },
-    { name:'observaciones', label:'Observaciones (opcional)', type:'text' },
-    { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: hoyISO() }
+  const l = S.cache.lotes.find(x => x.id == loteId);
+  const r = await M.form({ title:`Registrar cosecha${codigo?' · '+codigo:''}`, sub:'Los kilos se calculan: cantidad × peso de cada canastilla o bulto.', okText:'Guardar', fields: _camposCosecha(l) });
+  if (!r) return;
+  const k = _cosechaDeForm(r, l);
+  if (!k){ toast('Escribe cuántas se sacaron'); return; }
+  if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
+  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, ...k, calidad:r.calidad, observaciones:r.observaciones||null, fecha: r.fecha || null });
+  toast(resp.success ? `🌾 Cosecha: ${k.unidad === 'kg' ? '' : _plural(k.unidades, k.unidad) + ' = '}${k.kilos.toLocaleString('es-CO')} kg` : resp.msg); if (resp.success) render();
+};
+/* Cuánto se sembró en el lote (plantas, libras, papeletas…) */
+window.flowSiembraLote = async function(id){
+  const l = S.cache.lotes.find(x => x.id == id); if (!l) return;
+  const r = await M.form({ title:`Siembra · ${l.codigo}`, sub:'Con esto la app calcula el rendimiento: kilos por planta, bultos por libra o por papeleta.', okText:'Guardar', fields:[
+    { name:'siembra_cantidad', label:'¿Cuánto se sembró?', type:'number', required:true, initial: l.siembra_cantidad != null ? String(l.siembra_cantidad) : '', placeholder:'Ej: 1500' },
+    { name:'siembra_unidad', label:'Unidad', type:'select', options: UNIDADES_SIEMBRA.map(u => ({ value:u, label:u })), initial: l.siembra_unidad || perfilCultivo(l).siembra }
   ]});
-  if (!r || isNaN(parseFloat(r.kilos))) return;
-  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, kilos:parseFloat(r.kilos), calidad:r.calidad, observaciones:r.observaciones||null, fecha: r.fecha || null });
-  toast(resp.success ? '🌾 Cosecha registrada' : resp.msg); if (resp.success) render();
+  if (!r) return;
+  const resp = await HANDLERS.edit_lote(id, { siembra_cantidad: parseFloat(r.siembra_cantidad) || null, siembra_unidad: r.siembra_unidad });
+  if (resp.success && S.activeLote?.id === id) S.activeLote = S.cache.lotes.find(x => x.id == id) || S.activeLote;
+  toast(resp.success ? '✅ Siembra guardada' : resp.msg); if (resp.success) render();
 };
 
 window.flowNuevoJornal = async function(preLote = null){
