@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.1</title>
+<title>Finca El Retiro v12.2</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -536,6 +536,71 @@ input.plata{font-feature-settings:'tnum';font-weight:600;letter-spacing:.2px}
 .map-modal-title{font-family:var(--ft);font-size:16px;font-weight:600;color:var(--gd);flex:1}
 .map-modal-body{flex:1;overflow:hidden;position:relative}
 .map-modal-body .leaflet-container{height:100%!important;width:100%!important}
+/* ═══════════════════════════════════════════════════════════════
+   TABLET Y COMPUTADOR: la app ocupa la pantalla y el contenido
+   se centra con un ancho cómodo de leer
+   ═══════════════════════════════════════════════════════════════ */
+.lotes-grid{display:block}
+@media (min-width:720px){
+  #app{max-width:none;box-shadow:none}
+  .topbar{padding:12px 24px}
+  .tb-name{font-size:18px}
+  .tb-user{font-size:12px}
+  .ntab{font-size:12px;padding:10px 4px 8px;flex-direction:row;justify-content:center;gap:6px}
+  .ntab i{font-size:19px}
+  .ntab-badge{position:static;margin-left:2px;order:3}
+  .panel{padding:20px max(24px, calc((100% - 860px) / 2)) 28px}
+  .panel-title{font-size:22px}
+  .card-t{font-size:15px}
+  .chat-banner{padding:12px max(24px, calc((100% - 860px) / 2))}
+  .chat-msgs{padding:18px max(24px, calc((100% - 860px) / 2))}
+  .chat-inp{padding:12px max(24px, calc((100% - 860px) / 2)) 16px}
+  .bbl{max-width:72%}
+  .bbl-txt{font-size:14px}
+  .lotes-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .lotes-grid>.card{margin-bottom:0}
+  .bodega-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .galeria-grid{grid-template-columns:repeat(5,1fr);gap:8px}
+  .rend-grid{grid-template-columns:repeat(4,1fr)}
+  .fin-box-v{font-size:20px}
+  .balance-val{font-size:34px}
+  .inf-wrap{max-height:64vh}
+  .inf-table{font-size:13px}
+  #map-lote,#map-global{height:440px}
+  /* Las ventanas salen centradas, no pegadas abajo como en el celular */
+  .modal-overlay{align-items:center;padding:24px}
+  .modal-sheet{max-width:560px;border-radius:20px;padding:18px 26px 24px;max-height:88vh;animation:fadeUp .22s ease-out;box-shadow:0 12px 40px rgba(0,0,0,.22)}
+  .modal-handle{display:none}
+  .toast,.update-banner{bottom:32px}
+  .login .ulist{max-width:380px}
+}
+/* Computador y tablet acostada: menú al lado izquierdo */
+@media (min-width:1100px){
+  #app{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  #app>.login{grid-column:1 / -1;grid-row:1 / -1}
+  .topbar{grid-column:1 / -1}
+  .nav{grid-column:1;grid-row:2;flex-direction:column;overflow-x:hidden;overflow-y:auto;border-bottom:none;border-right:1px solid var(--bd);padding:14px 10px;gap:4px;background:var(--s2)}
+  .ntab{flex:0 0 auto;justify-content:flex-start;gap:12px;padding:11px 14px;font-size:14px;border-bottom:none;border-radius:10px;color:var(--tx2);text-align:left}
+  .ntab i{font-size:20px}
+  .ntab:hover{background:var(--s3)}
+  .ntab.act{background:var(--gl);color:var(--g);box-shadow:inset 3px 0 0 var(--gm)}
+  .ntab-badge{margin-left:auto}
+  .screen{grid-column:2;grid-row:2;min-height:0}
+  .panel{padding:24px max(32px, calc((100% - 980px) / 2)) 32px}
+  .chat-banner{padding:12px max(32px, calc((100% - 900px) / 2))}
+  .chat-msgs{padding:20px max(32px, calc((100% - 900px) / 2))}
+  .chat-inp{padding:12px max(32px, calc((100% - 900px) / 2)) 18px}
+  .lotes-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .bodega-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+  .galeria-grid{grid-template-columns:repeat(6,1fr)}
+  .lote-card:hover,.bodega-folder:hover,.uitem:hover{transform:translateY(-1px)}
+  .bodega-folder{transition:transform .1s,box-shadow .15s}
+  .bodega-folder:hover{box-shadow:var(--sh)}
+  #map-lote,#map-global{height:520px}
+}
+@media (min-width:1600px){
+  .lotes-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
 </style>
 </head>
 <body>
@@ -4006,7 +4071,7 @@ function renderCultivos(){
   // Lista de lotes con progreso de ciclo
   return `<div class="panel">
     <div class="panel-h"><div class="panel-title">Lotes</div><div class="row gap6"><button class="btn btn-sm btn-soft" onclick="flowGestionCiclos()"><i class="ti ti-plant-2"></i> Ciclos</button><button class="btn btn-sm btn-primary" id="btn-new-lote"><i class="ti ti-plus"></i> Crear</button></div></div>
-    ${S.cache.lotes.length ? S.cache.lotes.map(l => {
+    ${S.cache.lotes.length ? '<div class="lotes-grid">' + S.cache.lotes.map(l => {
       let cicloMini = '';
       if (l.fecha_siembra && l.ciclo_dias){
         const diasTrans = diasDesde(l.fecha_siembra);
@@ -4032,7 +4097,7 @@ function renderCultivos(){
           <i class="ti ti-chevron-right lote-card-chev"></i>
         </div>
       </div>`;
-    }).join('') : emptyState('ti-plant', 'Sin lotes', 'Crea tu primer lote.')}
+    }).join('') + '</div>' : emptyState('ti-plant', 'Sin lotes', 'Crea tu primer lote.')}
   </div>`;
 }
 
