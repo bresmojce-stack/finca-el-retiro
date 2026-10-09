@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v11.0</title>
+<title>Finca El Retiro v11.1</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -121,6 +121,19 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .bbl-a{background:var(--s);border:1px solid var(--bd);border-bottom-left-radius:5px}
 .bbl-u{background:linear-gradient(180deg,#F0F8DF,var(--gl));border:1px solid var(--gb);border-bottom-right-radius:5px}
 .bbl-txt{font-size:13.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.pleg{margin-top:10px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s);box-shadow:var(--sh-sm);overflow:hidden}
+.pleg-h{display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.pleg-h:active{background:var(--s2)}
+.pleg-t{flex:1;min-width:0;display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;color:var(--tx)}
+.pleg-t>i{color:var(--g);font-size:16px}
+.pleg-res{font-size:11.5px;font-weight:600;color:var(--tx2);white-space:nowrap}
+.pleg-acc{display:flex;gap:6px;flex-shrink:0}
+.pleg-ic{color:var(--tx3);font-size:17px;transition:transform .2s;flex-shrink:0}
+.pleg.open .pleg-ic{transform:rotate(180deg)}
+.pleg-b{display:none;padding:0 10px 10px}
+.pleg.open .pleg-b{display:block}
+.pleg-b>.card,.pleg-b>.task-group-card{box-shadow:none;margin-bottom:0}
+.task-group .pleg{margin-top:8px}
 .inf-btn{margin-top:8px;display:inline-flex;align-items:center;gap:5px;font-family:var(--f);font-size:12px;font-weight:600;color:var(--g);background:var(--gl);border:1px solid var(--gb);border-radius:999px;padding:5px 11px;cursor:pointer}
 .inf-chips{display:flex;gap:6px;overflow-x:auto;padding:0 2px 8px;scrollbar-width:none}
 .inf-chips::-webkit-scrollbar{display:none}
@@ -3440,7 +3453,8 @@ function renderTareas(){
   }
   function taskGroup(cls, label, items){
     if (!items.length) return '';
-    return `<div class="task-group ${cls}"><div class="task-group-h"><span class="dot"></span>${label} (${items.length})</div><div class="task-group-card">${items.map(taskRow).join('')}</div></div>`;
+    return `<div class="task-group ${cls}">${plegable('tareas-' + cls, `<span class="task-group-h" style="margin:0;padding:0"><span class="dot"></span>${label}</span>`,
+      `<div class="task-group-card">${items.map(taskRow).join('')}</div>`, { abierta: cls === 'urgent' || cls === 'today' || cls === 'soon', resumen: String(items.length) })}</div>`;
   }
 
   const pendBlock = (a.vencidas.length + a.hoy.length + a.proximas.length + a.sinFecha.length) ? `
@@ -3453,8 +3467,7 @@ function renderTareas(){
   return `<div class="panel">
     <div class="panel-h"><div class="panel-title">Tareas</div><button class="btn btn-sm btn-primary" id="btn-global-task"><i class="ti ti-plus"></i> Nueva</button></div>
     ${pendBlock}
-    <div class="sec-t mt12"><span><i class="ti ti-check"></i> Completadas recientes</span></div>
-    <div class="task-group-card">${doneList}</div>
+    ${plegable('tareas-completadas', `<i class="ti ti-check"></i> Completadas recientes`, `<div class="task-group-card">${doneList}</div>`, { resumen: String(Math.min(10, completadas.length)) })}
   </div>`;
 }
 
@@ -3482,6 +3495,28 @@ function renderBitacora(){
     <div class="panel-h"><div class="panel-title">Bitácora</div><div class="row gap6"><button class="btn btn-sm btn-soft" onclick="flowGaleria()"><i class="ti ti-photo"></i> Galería</button><button class="btn btn-sm btn-yellow" onclick="flowNuevaFoto()"><i class="ti ti-camera"></i> Foto</button><button class="btn btn-sm btn-blue" id="btn-gps" title="Guardar GPS"><i class="ti ti-map-pin"></i> GPS</button><button class="btn btn-sm btn-primary" id="btn-global-apunte"><i class="ti ti-plus"></i> Labor</button></div></div>
     <div class="card">${list}</div></div>`;
 }
+
+/* Sección desplegable: se toca el título para abrir o cerrar. El teléfono recuerda cómo la dejaste. */
+const PLEG_KEY = 'finca_plegables';
+function _plegEstado(){ try{ return JSON.parse(localStorage.getItem(PLEG_KEY) || '{}') || {}; }catch(e){ return {}; } }
+function plegable(id, titulo, contenido, { abierta = false, resumen = '', acciones = '' } = {}){
+  const st = _plegEstado(), open = (id in st) ? st[id] : abierta;
+  return `<div class="pleg${open ? ' open' : ''}" id="pleg-${id}">
+    <div class="pleg-h" onclick="togglePlegable('${id}')">
+      <div class="pleg-t">${titulo}</div>
+      ${resumen ? `<span class="pleg-res">${resumen}</span>` : ''}
+      ${acciones ? `<div class="pleg-acc" onclick="event.stopPropagation()">${acciones}</div>` : ''}
+      <i class="ti ti-chevron-down pleg-ic"></i>
+    </div>
+    <div class="pleg-b">${contenido}</div>
+  </div>`;
+}
+window.togglePlegable = function(id){
+  const el = document.getElementById('pleg-' + id); if (!el) return;
+  const open = el.classList.toggle('open');
+  const st = _plegEstado(); st[id] = open;
+  try{ localStorage.setItem(PLEG_KEY, JSON.stringify(st)); }catch(e){}
+};
 
 function renderCultivos(){
   if (S.activeLote){
@@ -3525,42 +3560,58 @@ function renderCultivos(){
           </div>
         </div>`;
         // Insumos aplicados
-        h += `<div class="sec-t mt12"><span><i class="ti ti-spray"></i> Insumos aplicados</span><span class="text-tiny">${fmtMoney(totInsumos)}</span></div>`;
-        h += consumos.length ? `<div class="card" style="padding:4px 14px">${consumos.slice(0,12).map(c=>`<div class="mini-list-item"><div class="icon-pill ip-blue" style="width:28px;height:28px;font-size:14px"><i class="ti ti-droplet"></i></div><div class="mini-list-body"><div class="mini-list-title">${esc(c.concepto)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtDate(c.fecha_compra)}</span></div></div><div style="font-weight:700;color:var(--rd);flex-shrink:0">${fmtMoney(c.valor_total)}</div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditConsumo('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteConsumo('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin insumos aplicados aún. Usa un producto de bodega y elige este lote.</div>`;
+        h += plegable('lote-insumos', `<i class="ti ti-spray"></i> Insumos aplicados`, consumos.length ? `<div class="card" style="padding:4px 14px">${consumos.map(c=>`<div class="mini-list-item"><div class="icon-pill ip-blue" style="width:28px;height:28px;font-size:14px"><i class="ti ti-droplet"></i></div><div class="mini-list-body"><div class="mini-list-title">${esc(c.concepto)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtDate(c.fecha_compra)}</span></div></div><div style="font-weight:700;color:var(--rd);flex-shrink:0">${fmtMoney(c.valor_total)}</div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditConsumo('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteConsumo('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin insumos aplicados aún. Usa un producto de bodega y elige este lote.</div>`,
+          { resumen: `${consumos.length} · ${fmtMoney(totInsumos)}` });
         // Jornales
-        h += `<div class="sec-t mt12"><span><i class="ti ti-users"></i> Jornales</span><span class="text-tiny">${fmtMoney(totJorn)}</span></div>`;
-        h += jornL.length ? `<div class="card" style="padding:4px 14px">${jornL.slice(0,12).map(j=>`<div class="mini-list-item"><div class="icon-pill ip-brown" style="width:28px;height:28px;font-size:14px"><i class="ti ti-user"></i></div><div class="mini-list-body"><div class="mini-list-title">${esc(j.trabajador)}</div><div class="mini-list-meta"><span>${j.dias} día(s) × ${fmtMoney(j.valor_dia)}</span><span><i class="ti ti-calendar"></i> ${fmtFecha(j.fecha)}</span>${j.nota?`<span>${esc(j.nota)}</span>`:''}</div></div><div style="font-weight:700;color:var(--rd);flex-shrink:0">${fmtMoney(j.valor_total)}</div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditJornal('${j.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteJornal('${j.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin jornales registrados. Toca el botón Jornal arriba.</div>`;
+        h += plegable('lote-jornales', `<i class="ti ti-users"></i> Jornales`, jornL.length ? `<div class="card" style="padding:4px 14px">${jornL.map(j=>`<div class="mini-list-item"><div class="icon-pill ip-brown" style="width:28px;height:28px;font-size:14px"><i class="ti ti-user"></i></div><div class="mini-list-body"><div class="mini-list-title">${esc(j.trabajador)}</div><div class="mini-list-meta"><span>${j.dias} día(s) × ${fmtMoney(j.valor_dia)}</span><span><i class="ti ti-calendar"></i> ${fmtFecha(j.fecha)}</span>${j.nota?`<span>${esc(j.nota)}</span>`:''}</div></div><div style="font-weight:700;color:var(--rd);flex-shrink:0">${fmtMoney(j.valor_total)}</div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditJornal('${j.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteJornal('${j.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin jornales registrados. Toca el botón Jornal arriba.</div>`,
+          { resumen: `${jornL.length} · ${fmtMoney(totJorn)}` });
         return h;
       })()}
-      <div class="panel-h"><div class="sec-t" style="margin:0"><span><i class="ti ti-clock"></i> Pendientes (${pend.length})</span></div><div class="row gap6" style="flex-wrap:wrap;justify-content:flex-end"><button class="btn btn-sm btn-blue" onclick="flowMapaLote('${l.id}','${l.codigo}')"><i class="ti ti-map-pin"></i> Mapa</button><button class="btn btn-sm btn-yellow" id="btn-new-task"><i class="ti ti-plus"></i> Tarea</button><button class="btn btn-sm btn-soft" id="btn-new-apunte"><i class="ti ti-edit"></i> Labor</button><button class="btn btn-sm btn-brown" onclick="flowNuevoJornal('${l.id}')" style="background:var(--p-brown);color:#7A4A08;border-color:#E8C99A"><i class="ti ti-user"></i> Jornal</button></div></div>
-      <div class="card">${pend.length ? pend.map(t => {
+      <div class="row gap6 mt12" style="flex-wrap:wrap;justify-content:flex-end"><button class="btn btn-sm btn-blue" onclick="flowMapaLote('${l.id}','${l.codigo}')"><i class="ti ti-map-pin"></i> Mapa</button><button class="btn btn-sm btn-yellow" id="btn-new-task"><i class="ti ti-plus"></i> Tarea</button><button class="btn btn-sm btn-soft" id="btn-new-apunte"><i class="ti ti-edit"></i> Labor</button><button class="btn btn-sm btn-brown" onclick="flowNuevoJornal('${l.id}')" style="background:var(--p-brown);color:#7A4A08;border-color:#E8C99A"><i class="ti ti-user"></i> Jornal</button></div>
+      ${plegable('lote-pendientes', `<i class="ti ti-clock"></i> Pendientes`, `<div class="card">${pend.length ? pend.map(t => {
         const tit = escA(t.titulo||'');
         return `<div class="task-row" id="task-row-${t.id}"><div class="task-check" data-complete-task="${t.id}"><i class="ti ti-check"></i></div><div class="task-row-body"><div class="task-row-title">${esc(t.titulo)}</div><div class="task-row-meta"><span><i class="ti ti-calendar"></i> ${t.fecha_limite ? fmtFecha(t.fecha_limite) : 'Sin fecha'}</span></div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditTask('${t.id}')" style="padding:4px;border:none"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteTask('${t.id}','${tit}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>`;
-      }).join('') : emptyState('ti-checks','Lote al día','Sin tareas pendientes.')}</div>
-      <div class="sec-t mt12"><span><i class="ti ti-notebook"></i> Bitácora del lote</span></div>
-      <div class="card">${bit.length ? bit.map(b => {
+      }).join('') : emptyState('ti-checks','Lote al día','Sin tareas pendientes.')}</div>`, { abierta: pend.length > 0, resumen: String(pend.length) })}
+      ${(() => {
+        /* Labores del lote separadas: fumigaciones, fertilizaciones y lo demás */
+        const fila = b => {
         const actEsc = escA(b.actividad||'');
         return `<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${esc(b.actividad)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtDate(b.fecha)}</span><span><i class="ti ti-user"></i> ${b.responsable?.nombre_corto || '—'}</span></div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditActivity('${b.id}','${actEsc}')" style="padding:4px;border:none"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteActivity('${b.id}')" style="color:var(--rd);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>`;
-      }).join('') : emptyState('ti-notebook','Sin registros','Aún no hay labores anotadas.')}</div>
-      <div class="sec-t mt12"><span><i class="ti ti-basket"></i> Cosechas</span><button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button></div>
+        };
+        const esFumig = b => /fumig|asperj|fungicid|insecticid|herbicid|acaricid/i.test(_normTxt(b.actividad));
+        const esFerti = b => !esFumig(b) && /fertiliz|abon|calcio|foliar|drench|nutri|fertirrig|enmienda|\bcal\b/i.test(_normTxt(b.actividad));
+        const grupos = [
+          ['lote-fumigaciones', 'ti-spray', 'Fumigaciones', bit.filter(esFumig)],
+          ['lote-fertilizaciones', 'ti-seeding', 'Fertilizaciones y abonadas', bit.filter(esFerti)],
+          ['lote-labores', 'ti-notebook', 'Otras labores', bit.filter(b => !esFumig(b) && !esFerti(b))],
+        ];
+        bit.sort((a, b) => tsOrden(b.fecha) - tsOrden(a.fecha));
+        if (!bit.length) return plegable('lote-labores', `<i class="ti ti-notebook"></i> Bitácora del lote`, `<div class="card">${emptyState('ti-notebook','Sin registros','Aún no hay labores anotadas.')}</div>`, { resumen:'0' });
+        return grupos.map(([id, ic, nom, lista]) => plegable(id, `<i class="ti ${ic}"></i> ${nom}`,
+          lista.length ? `<div class="card">${lista.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin registros.</div>`,
+          { resumen: lista.length ? `${lista.length} · última ${fmtFecha(lista[0].fecha)}` : '0' })).join('');
+      })()}
       ${(() => {
         const cs = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id);
-        if (!cs.length) return `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote.</div>`;
+        const btnCos = `<button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button>`;
+        if (!cs.length) return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote.</div>`, { resumen:'0', acciones: btnCos });
         const totalKg = cs.reduce((a,c)=>a+(parseFloat(c.volumen_kg)||0),0);
         const costoL = (S.cache.compras||[]).filter(c=>c.lote_id===l.id).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const resumen = `<div class="map-dims" style="margin-bottom:8px"><div><b>${totalKg.toLocaleString('es-CO')} kg</b>Cosechado</div>${costoL>0?`<div><b>${fmtMoney(costoL/totalKg)}</b>Costo por kg</div><div><b>${fmtMoney(costoL)}</b>Invertido</div>`:''}</div>`;
-        return resumen + `<div class="card" style="padding:4px 14px">${cs.slice(0,8).map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${c.volumen_kg} kg · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`;
+        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${c.volumen_kg} kg · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
+          { resumen: `${cs.length} · ${totalKg.toLocaleString('es-CO')} kg`, acciones: btnCos });
       })()}
-      <div class="sec-t mt12"><span><i class="ti ti-photo"></i> Fotos del lote</span><div class="row gap6"><button class="btn btn-sm btn-soft" onclick="flowGaleria('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-photo"></i> Ver todas</button><button class="btn btn-sm btn-yellow" onclick="flowNuevaFoto('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-camera"></i> Foto</button></div></div>
       ${(() => {
-        const fs = (S.cache.fotos||[]).filter(f => f.lote_id === l.id).slice(0,6);
-        return fs.length ? `<div class="galeria-grid">${fs.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(f.url)}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin fotos de este lote aún.</div>`;
+        const todas = (S.cache.fotos||[]).filter(f => f.lote_id === l.id), fs = todas.slice(0,6);
+        const btnFotos = `<button class="btn btn-sm btn-soft" onclick="flowGaleria('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-photo"></i> Ver todas</button><button class="btn btn-sm btn-yellow" onclick="flowNuevaFoto('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-camera"></i> Foto</button>`;
+        return plegable('lote-fotos', `<i class="ti ti-photo"></i> Fotos`, fs.length ? `<div class="galeria-grid">${fs.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(f.url)}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin fotos de este lote aún.</div>`,
+          { resumen: String(todas.length), acciones: btnFotos });
       })()}
-      <div class="sec-t mt12"><span><i class="ti ti-bug"></i> Plagas activas en este lote</span><button class="btn btn-sm btn-red" onclick="flowNuevaPlaga()" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Nueva</button></div>
       ${(() => {
         const pl = S.cache.plagas.filter(p=>p.activa && p.lote_id===l.id);
-        if (!pl.length) return `<div class="text-tiny" style="padding:8px 0;color:var(--tx3)"><i class="ti ti-circle-check" style="color:var(--g)"></i> Sin plagas activas en este lote.</div>`;
-        return pl.map(p=>`<div class="plaga-card ${p.severidad||'leve'}" style="margin-bottom:6px">
+        const btnPl = `<button class="btn btn-sm btn-red" onclick="flowNuevaPlaga()" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Nueva</button>`;
+        if (!pl.length) return plegable('lote-plagas', `<i class="ti ti-bug"></i> Plagas activas`, `<div class="text-tiny" style="padding:8px 0;color:var(--tx3)"><i class="ti ti-circle-check" style="color:var(--g)"></i> Sin plagas activas en este lote.</div>`, { resumen:'0', acciones: btnPl });
+        return plegable('lote-plagas', `<i class="ti ti-bug"></i> Plagas activas`, pl.map(p=>`<div class="plaga-card ${p.severidad||'leve'}" style="margin-bottom:6px">
           <div class="plaga-header"><div class="plaga-icon ${p.severidad||'leve'}"><i class="ti ti-bug"></i></div>
           <div style="flex:1"><div class="plaga-title">${esc(p.tipo)}</div><div class="plaga-meta"><span>${fmtFecha(p.fecha_deteccion)}</span></div></div>
           <span class="plaga-badge ${p.severidad||'leve'}">${p.severidad||'leve'}</span></div>
@@ -3569,7 +3620,7 @@ function renderCultivos(){
             <button class="btn btn-sm btn-ghost" onclick="flowControlarPlaga('${p.id}','${escA(p.tipo||'')}','${escA(l.codigo)}')" style="padding:4px 8px;font-size:11px"><i class="ti ti-spray"></i> Controlar</button>
             <button class="btn btn-sm btn-ghost" onclick="flowCerrarPlaga('${p.id}','${escA(p.tipo||'')}')" style="color:var(--g);padding:4px;border:none"><i class="ti ti-circle-check"></i></button>
           </div>
-        </div>`).join('');
+        </div>`).join(''), { abierta: true, resumen: `⚠️ ${pl.length}`, acciones: btnPl });
       })()}
     </div>`;
   }
@@ -3654,10 +3705,9 @@ function renderDinero(){
   const costoPorLote = {};
   S.cache.lotes.forEach(l => { const c = costoLote(l.id); if (c>0) costoPorLote[l.id] = c; });
   const lotesConCosto = S.cache.lotes.filter(l => costoPorLote[l.id] > 0);
-  const loteCostHtml = lotesConCosto.length ? `<div class="card" style="margin-top:12px;padding:10px 14px">
-    <div class="sec-t" style="margin:0 0 6px"><span><i class="ti ti-plant"></i> Costo acumulado por lote</span></div>
+  const loteCostHtml = lotesConCosto.length ? plegable('dinero-lotes', `<i class="ti ti-plant"></i> Costo acumulado por lote`, `<div class="card" style="padding:10px 14px">
     ${lotesConCosto.map(l => `<div class="lote-cost-row" style="cursor:pointer" onclick="flowHistorialLote('${l.id}')"><span><b>${esc(l.codigo)}</b> · ${esc(l.cultivo)}</span><span style="display:flex;align-items:center;gap:6px"><span style="font-weight:700;font-feature-settings:'tnum';color:var(--br)">${fmtMoney(costoPorLote[l.id])}</span><i class="ti ti-chevron-right" style="color:var(--tx3)"></i></span></div>`).join('')}
-  </div>` : '';
+  </div>`, { resumen: `${lotesConCosto.length} lotes` }) : '';
 
   const ultimos = [
     ...S.cache.compras.map(c => ({tipo:'gasto', id:c.id, concepto:c.concepto, valor:c.valor_total, fecha:c.fecha_compra, categoria:c.categoria, origen:c.origen, lote_id:c.lote_id})),
@@ -3695,8 +3745,7 @@ function renderDinero(){
     <div class="balance-card"><div class="balance-label">Balance real</div><div class="balance-val" style="color:${balance>=0?'var(--g)':'var(--rd)'}">${fmtMoney(balance)}</div></div>
     ${loteCostHtml}
     <div class="row gap8 mt12"><button class="btn btn-red flex1" id="btn-add-gasto"><i class="ti ti-minus"></i> Gasto</button><button class="btn btn-yellow flex1" onclick="flowNuevoJornal()"><i class="ti ti-user"></i> Jornal</button><button class="btn btn-primary flex1" id="btn-add-ingreso"><i class="ti ti-plus"></i> Ingreso</button></div>
-    <div class="sec-t mt12"><span><i class="ti ti-history"></i> Últimos movimientos</span></div>
-    <div class="card">${movList}</div>
+    ${plegable('dinero-movimientos', `<i class="ti ti-history"></i> Últimos movimientos`, `<div class="card">${movList}</div>`, { abierta: true, resumen: String(ultimos.length) })}
   </div>`;
 }
 
@@ -4953,8 +5002,7 @@ function renderMapasGlobal(){
       <div id="map-global"></div>
       <button class="map-fullscreen-btn" onclick="flowMapaFullscreen('global')"><i class="ti ti-arrows-maximize"></i> Ampliar</button>
     </div>
-    <div class="sec-t"><span><i class="ti ti-plant"></i> Lotes</span></div>
-    ${loteCards}
+    ${plegable('mapas-lotes', `<i class="ti ti-plant"></i> Lotes`, loteCards, { abierta: true, resumen: String(lotes.length) })}
   </div>`;
 }
 
