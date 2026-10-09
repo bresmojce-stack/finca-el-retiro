@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v11.4</title>
+<title>Finca El Retiro v12.0</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -121,6 +121,14 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .bbl-a{background:var(--s);border:1px solid var(--bd);border-bottom-left-radius:5px}
 .bbl-u{background:linear-gradient(180deg,#F0F8DF,var(--gl));border:1px solid var(--gb);border-bottom-right-radius:5px}
 .bbl-txt{font-size:13.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.sop-fila{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;align-items:center}
+.sop-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--bd);cursor:pointer}
+.sop-chip{height:40px;min-width:40px;padding:0 10px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--rd);font-size:20px;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-family:var(--f)}
+.sop-chip.sop-add{color:var(--g);font-size:12px;font-weight:700;border-style:dashed}
+.sop-chip.sop-add i{font-size:17px}
+.asig-lista{max-height:52vh;overflow:auto;border:1px solid var(--bd);border-radius:10px}
+.asig-fila{display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s3);font-size:12.5px;cursor:pointer}
+.asig-fila input{width:20px;height:20px;flex-shrink:0;accent-color:var(--g)}
 .plata-wrap{position:relative}
 .plata-wrap .plata-signo{position:absolute;left:12px;top:0;bottom:0;display:flex;align-items:center;font-weight:700;color:var(--tx2);pointer-events:none;font-size:14px;line-height:1}
 .plata-wrap input.plata{padding-left:26px;margin-bottom:0}
@@ -768,7 +776,7 @@ const S = {
   screen:'login', user:null, tab:'agente',
   users:[], messages:[], loading:false,
   pendImg:null, listening:false, voiceCountdown:false,
-  cache:{users:[], lotes:[], inventory:[], compras:[], ingresos:[], memoria:[], tasks:[], activities:[], coordenadas:[], ciclos:[], plagas:[], fotos:[], cosechas:[], jornales:[]},
+  cache:{users:[], lotes:[], inventory:[], compras:[], ingresos:[], memoria:[], tasks:[], activities:[], coordenadas:[], ciclos:[], plagas:[], fotos:[], cosechas:[], jornales:[], proyectos:[], soportes:[]},
   isOnline:navigator.onLine, activeLote:null,
   activeBodegaCat: null, activeBodegaSub: null
 };
@@ -778,7 +786,7 @@ const S = {
    ═══════════════════════════════════════════════════════════════ */
 const Nav = {
   _booted: false,
-  estado(){ return { app: S.screen === 'app', tab: S.tab, lote: S.activeLote?.id || null, cat: S.activeBodegaCat || null, sub: S.activeBodegaSub || null }; },
+  estado(){ return { app: S.screen === 'app', tab: S.tab, lote: S.activeLote?.id || null, cat: S.activeBodegaCat || null, sub: S.activeBodegaSub || null, proyecto: S.activeProyecto || null }; },
   push(){
     if (!this._booted) return;
     try{ history.pushState(this.estado(), ''); }catch(e){}
@@ -802,6 +810,7 @@ const Nav = {
       S.activeLote = st.lote ? (S.cache.lotes.find(l => l.id === st.lote) || null) : null;
       S.activeBodegaCat = st.cat || null;
       S.activeBodegaSub = st.sub || null;
+      S.activeProyecto = st.proyecto || null;
       render();
     });
   }
@@ -878,11 +887,13 @@ const HANDLERS = {
   },
   add_gasto: async (i) => {
     const payload = { concepto:i.concepto, categoria:i.categoria, valor_total:i.valor_total, lote_id:i.lote_id||null, fecha_compra: i.fecha || fechaLocalISO() };
+    if (i.proyecto_id){ payload.proyecto_id = i.proyecto_id; payload.rubro = i.rubro || null; }
+    if (i.proveedor) payload.proveedor = i.proveedor;
     if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); return {success:true, msg:'Gasto registrado (offline)'}; }
-    const { error } = await sb.from('compras').insert(payload); 
+    const { data, error } = await sb.from('compras').insert(payload).select('id').single();
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
-    return {success:true, msg:'Gasto registrado'};
+    return {success:true, msg:'Gasto registrado', id: data?.id};
   },
   add_ingreso: async (i) => {
     const payload = { concepto:i.concepto, valor_total:i.valor_total, fecha: tsDeDia(i.fecha) };
@@ -1210,7 +1221,7 @@ const HANDLERS = {
   registrar_jornal: async (i) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar jornales'};
     const total = (parseFloat(i.dias)||0) * (parseFloat(i.valor_dia)||0);
-    const { error } = await sb.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null });
+    const { error } = await sb.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null, ...(i.proyecto_id ? { proyecto_id:i.proyecto_id } : {}) });
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
     return {success:true, msg:'Jornal registrado', total};
@@ -1340,7 +1351,7 @@ async function traerTodo(armar){
 
 async function refreshAll(){
   try{
-    const [lotes, inv, compras, ingresos, memoria, tasks, acts, coords, ciclos, plagas, fotos, cosechas, jornales] = await Promise.all([
+    const [lotes, inv, compras, ingresos, memoria, tasks, acts, coords, ciclos, plagas, fotos, cosechas, jornales, proyectos, soportes] = await Promise.all([
       sb.from('lotes').select('*').eq('activo', true),
       sb.from('inventario').select('*').order('descripcion'),
       traerTodo(() => sb.from('compras').select('*').order('fecha_compra', { ascending:false }).order('id')),
@@ -1353,7 +1364,9 @@ async function refreshAll(){
       sb.from('plagas').select('*, lote:lotes(codigo,cultivo), registrado:usuarios!registrado_por(nombre_corto)').order('creado_en', { ascending:false }),
       sb.from('fotos').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).limit(300),
       traerTodo(() => sb.from('cosechas').select('*, lote:lotes(codigo,cultivo)').order('fecha_recoleccion', { ascending:false }).order('id')),
-      traerTodo(() => sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).order('id'))
+      traerTodo(() => sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).order('id')),
+      sb.from('proyectos').select('*').order('creado_en'),
+      traerTodo(() => sb.from('soportes').select('*').order('creado_en').order('id'))
     ]);
     S.cache.lotes       = lotes.data    || [];
     S.cache.inventory   = inv.data      || [];
@@ -1368,6 +1381,8 @@ async function refreshAll(){
     S.cache.fotos       = fotos.data    || [];
     S.cache.cosechas    = cosechas.data || [];
     S.cache.jornales    = jornales.data || [];
+    S.cache.proyectos   = proyectos.data || [];
+    S.cache.soportes    = soportes.data || [];
   } catch(e){ console.warn('refreshAll fallo:', e.message); }
 }
 
@@ -1980,7 +1995,10 @@ function interpretarLocal(dominio, texto){
       const cuenta = (plata && total !== plata.v) ? ` · ${cant} × ${fmtMoney(plata.v)} = ${fmtMoney(total)}` : '';
       if (/\bvend\w*|\bventa\b|\bingres\w*|me pagaron|nos pagaron|\bcobr\w*|\brecibi\b/.test(t2))
         return { accion:'ingreso', concepto: limpio || 'Venta', valor: total || '', fecha, resumen: 'Ingreso / venta' + cuenta, _seguro: !!total };
-      return { accion:'gasto', concepto: limpio, valor: total || '', categoria: _categoria(t2), lote_codigo: lote?.codigo || null, fecha, resumen: 'Gasto' + cuenta, _seguro: !!(total && limpio) };
+      const delPrestamo = /\bprestamo\b|construccion del invernadero|estructura del invernadero/.test(t2);
+      const limpio2 = delPrestamo ? _frase(limpio.replace(/[,.]?\s*(va |es |fue )?(al|del|con el|para el|por el) pr[eé]stamo\b/i, '')) : limpio;
+      return { accion:'gasto', concepto: limpio2, valor: total || '', categoria: delPrestamo ? 'Inversión invernadero' : _categoria(t2), lote_codigo: lote?.codigo || null, fecha,
+        prestamo: delPrestamo, rubro: rubroDeTexto(limpio2), resumen: (delPrestamo ? 'Gasto del préstamo' : 'Gasto') + cuenta, _seguro: !!(total && limpio2) };
     }
     case 'tareas': {
       if (/\b(ya )?(hice|hicimos|termin\w*|complet\w*|acab\w*|listo|lista|cumpl\w*)\b/.test(t) && !/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|toca)\b/.test(t)){
@@ -2230,6 +2248,7 @@ function entenderInforme(texto){
   const t = rango ? (t0.slice(0, rango.i) + ' ' + t0.slice(rango.i + rango.n)).replace(/\s+/g, ' ').trim() : t0;
 
   let fuente = null;
+  if (/\bprestamo\b|\binversion del invernadero\b|\binvertido (del|en el) (prestamo|invernadero)\b/.test(t0) && proyectoPrincipal()) return { accion:'informe', fuente:'prestamo', op:'lista', palabras:[], _seguro:true };
   const hayProductoAplicado = () => { const ns = _nombresAplicados(); return t.split(' ').some(w => w.length >= 4 && [...ns].some(n => n.startsWith(w) || w.startsWith(n))) || !!_producto(t); };
   if (/\bcompr/.test(t)) fuente = 'compras';
   else if (/\b(inventario|bodega|stock|existencias?|agotad\w*|por vencer|vencid\w*|se (esta|estan) acabando)\b/.test(t) || /\b(que|cuales) (insumos|productos) (hay|tengo|tenemos|quedan)\b/.test(t)) fuente = 'inventario';
@@ -2288,6 +2307,7 @@ function entenderInforme(texto){
 /* Arma el informe: filtra, ordena, agrupa y suma. Devuelve {titulo, filtro, cols, filas, total, texto} */
 function generarInforme(q){
   if (q.fuente === 'general') return resumenGeneral(q);
+  if (q.fuente === 'prestamo') return informeDePrestamo();
   const src = FUENTES_INF[q.fuente]; if (!src) return null;
   const lote = q.lote_codigo ? resolverLote(q.lote_codigo) : null;
   let filas = src.filas(q);
@@ -2404,6 +2424,17 @@ function resumenGeneral(q){
     filas, n: filas.length, total: egresos, totalKg: cos.totalKg, texto, agrupado: true };
 }
 
+/* Préstamo del invernadero como informe del chat */
+function informeDePrestamo(){
+  const p = proyectoPrincipal(); if (!p) return null;
+  const R = resumenProyecto(p);
+  const filas = R.movs.map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto, proveedor:m.proveedor, rubro:m.rubro, valor:m.valor, soporte: m.soportes.length ? `${m.soportes.length} archivo(s)` : 'FALTA' }));
+  const texto = [`🏦 ${p.nombre}${p.entidad ? ' · ' + p.entidad : ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : 'Prestado: falta poner el monto', `Invertido: ${fmtMoney(R.invertido)} en ${R.movs.length} gasto(s)`,
+    R.saldo != null ? `Por invertir: ${fmtMoney(R.saldo)} (${R.pct.toLocaleString('es-CO')}% invertido)` : '', R.rubros.length ? 'Por rubro:\n' + R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`).join('\n') : '',
+    `Soportes: ${R.conSoporte} de ${R.movs.length} gastos${R.movs.length - R.conSoporte ? ` · faltan ${R.movs.length - R.conSoporte}` : ''}`, 'Ábrelo en Dinero → Préstamo para adjuntar facturas o sacar el informe para el banco.'].filter(Boolean).join('\n');
+  return { titulo: p.nombre, filtro: p.entidad || '', cols:[['fecha','Fecha'],['concepto','Concepto'],['rubro','Rubro'],['valor','Valor'],['soporte','Soporte']], filas, n: filas.length, total: R.invertido, texto, imprimir: () => imprimirPrestamo(p, R) };
+}
+
 /* Informe a partir de lo que escribió el usuario (null si no es un pedido de informe) */
 function informeLocal(texto){ const q = entenderInforme(texto); return q ? generarInforme(q) : null; }
 
@@ -2426,9 +2457,11 @@ window.abrirInforme = function(inf){
     <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
       <button class="btn btn-ghost" id="inf-copiar"><i class="ti ti-copy"></i> Copiar</button>
       <button class="btn btn-ghost" id="inf-csv"><i class="ti ti-file-spreadsheet"></i> Excel</button>
+      ${inf.imprimir ? `<button class="btn btn-ghost" id="inf-pdf"><i class="ti ti-printer"></i> PDF</button>` : ''}
       <button class="btn btn-primary" id="inf-compartir"><i class="ti ti-share"></i> Compartir</button>
     </div>`;
   M._open(html);
+  if (inf.imprimir) document.getElementById('inf-pdf').onclick = () => inf.imprimir();
   document.getElementById('inf-copiar').onclick = async () => { try{ await navigator.clipboard.writeText(inf.texto); toast('Informe copiado'); }catch(e){ toast('No se pudo copiar'); } };
   document.getElementById('inf-csv').onclick = () => {
     const a = document.createElement('a');
@@ -2494,6 +2527,7 @@ const AYUDA = `Esto es lo que entiendo sin IA (no gasta cuota):
 • «borra la última labor», «corrige el último gasto»
 • «para qué sirve lannate» (ficha del producto)
 • «abre bodega», «saldo», «qué hay para hoy», «clima», «ver apuntes»
+• Préstamo: «abre el préstamo», «cuánto llevo invertido del préstamo», «compré 20 tubos por 800 mil para el préstamo»
 • Cuentas: «cuánto es 36 por 22», «suma 200 mil y 50 mil», «el 10% de 800 mil»
 • Precios: «vendimos 30 canastillas a 80 mil» (calcula 30 × 80 mil)
 
@@ -2631,6 +2665,7 @@ function pensar(texto, dominio){
   if (corto && /^(hola|holi|buenas|buenos dias|buenas tardes|buenas noches|hey|que mas|quiubo|epa|saludos)\b/.test(t) && !RX_LABOR.test(t)) return { texto: saludoLocal() };
   if (/^(ayuda|help|menu|\?)$|\b(que (puedes|sabes) hacer|como (funciona|te uso|se usa)|que te puedo (decir|preguntar|pedir)|comandos|ejemplos)\b/.test(t)) return { texto: AYUDA };
   if (corto && /^(gracias|muchas gracias|listo|ok|okey|vale|perfecto|bien|excelente|de una)\b/.test(t)) return { texto: '👍 Con gusto.' };
+  if (/^(abre|abrir|abreme|ver|ir a|ve a|llevame a|muestrame)\b.*\bprestamo\b/.test(t) && proyectoPrincipal()) return { ejecutar: () => { S.tab = 'dinero'; abrirPrestamo(proyectoPrincipal().id); }, texto: '🏦 Abrí el préstamo del invernadero.' };
   const nav = t.match(/^(abre|abrir|abreme|ir a|ve a|vamos a|llevame a|muestrame la pestana de|pestana)\s+(la |el |los |las )?(\w+)/);
   if (nav && PESTANAS[nav[3]]) return { ir: PESTANAS[nav[3]], texto: `Listo, abrí ${nav[3]}.` };
 
@@ -2788,7 +2823,9 @@ function camposDe(prop){
     case 'salida': return [{k:'producto',label:'Producto',type:'text',v:prop.producto||''},
       {k:'cantidad',label:'Cantidad',type:'number',v:prop.cantidad||''},{k:'unidad',label:'Unidad',type:'text',v:prop.unidad||''},
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
-    case 'gasto': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'money',v:prop.valor||''},
+    case 'gasto': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},
+      ...(proyectoPrincipal() ? [{k:'prestamo',label:'¿Se pagó con el préstamo del invernadero?',type:'select',v:prop.prestamo?'si':'no',options:[{value:'no',label:'No'},{value:'si',label:'Sí, es del préstamo'}]},
+        {k:'rubro',label:'Rubro (si es del préstamo)',type:'select',v:prop.rubro||rubroDeTexto(prop.concepto||''),options:RUBROS.map(x=>({value:x,label:x}))}] : []),{k:'valor',label:'Valor',type:'money',v:prop.valor||''},
       {k:'categoria',label:'Categoría',type:'text',v:prop.categoria||'otro'},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'ingreso': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'money',v:prop.valor||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'jornal': return [{k:'trabajador',label:'Trabajador',type:'text',v:prop.trabajador||''},{k:'dias',label:'Días',type:'number',v:prop.dias||1},
@@ -2882,7 +2919,10 @@ async function ejecutarAccion(v){
       return r.success?`📦 Salida: -${r.usado} ${r.unidad} de ${r.descripcion}${r.costo>0?' · '+fmtMoney(r.costo):''}`:('⚠️ '+r.msg);
     }
     case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) await refreshAll(); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
-    case 'gasto':{ const lote=resolverLote(v.lote_codigo); await HANDLERS.add_gasto({concepto:v.concepto,categoria:v.categoria||'otro',valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return '💸 Gasto registrado'; }
+    case 'gasto':{ const lote=resolverLote(v.lote_codigo); const pr = v.prestamo==='si' ? proyectoPrincipal() : null;
+      const r=await HANDLERS.add_gasto({concepto:v.concepto,categoria:pr?'Inversión invernadero':(v.categoria||'otro'),valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||pr?.lote_id||null,fecha:v.fecha||null,
+        ...(pr?{proyecto_id:pr.id, rubro:v.rubro||rubroDeTexto(v.concepto)}:{})});
+      return r.success ? (pr ? `💸 Gasto del préstamo registrado (${v.rubro}). Adjunta la factura en Dinero → Préstamo.` : '💸 Gasto registrado') : ('⚠️ '+r.msg); }
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
     case 'jornal':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.registrar_jornal({trabajador:v.trabajador,dias:parseFloat(v.dias)||1,valor_dia:parseFloat(v.valor_dia)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return r.success?`👷 Jornal · ${fmtMoney(r.total)}`:('⚠️ '+r.msg); }
     case 'crear_tarea':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.create_task({titulo:v.titulo,fecha_limite:v.fecha_limite||null,asignado_a:v.asignado||'todos',lote_id:lote?.id||null}); return r.success?'📋 Tarea programada':('⚠️ '+r.msg); }
@@ -4031,6 +4071,310 @@ window.flowHistorialLote = function(loteId){
   return p;
 };
 
+/* ═══════════════════════════════════════════════════════════════
+   PRÉSTAMO DEL INVERNADERO (proyectos de inversión)
+   Gastos y jornales marcados con el préstamo, soportes (fotos y PDF
+   de facturas) y el informe para el banco. Estos gastos siguen
+   contando en los gastos generales y en el costo del lote.
+   ═══════════════════════════════════════════════════════════════ */
+const RUBROS = ['Estructura','Plástico y cubiertas','Riego','Materiales','Mano de obra','Transporte','Semilla y plántulas','Herramientas','Otros'];
+function rubroDeTexto(t){
+  t = _normTxt(t);
+  if (/jornal|mano de obra|maestro|obrero|ayudante|trabajador/.test(t)) return 'Mano de obra';
+  if (/plastico|polisombra|malla|agribon|cubierta|tela/.test(t)) return 'Plástico y cubiertas';
+  if (/riego|manguera|cinta|gotero|tanque|bomba|aspersor|tuberia|tubo pvc|filtro/.test(t)) return 'Riego';
+  if (/transporte|flete|acarreo|camion|gasolina|acpm/.test(t)) return 'Transporte';
+  if (/semilla|plantula|plantin/.test(t)) return 'Semilla y plántulas';
+  if (/guadua|madera|poste|tubo|estructura|alambre|cable|tornill|cemento|varilla|arco|cercha|perfil|hierro|zinc|inmuniz/.test(t)) return 'Estructura';
+  if (/herramienta|pala|machete|taladro|sierra/.test(t)) return 'Herramientas';
+  return 'Materiales';
+}
+function proyectoPrincipal(){ return (S.cache.proyectos || []).find(p => p.activo !== false) || null; }
+/* Gastos (compras) y jornales del préstamo como movimientos comunes */
+function movimientosProyecto(p){
+  if (!p) return [];
+  const sop = S.cache.soportes || [];
+  const compras = (S.cache.compras || []).filter(c => c.proyecto_id === p.id).map(c => ({
+    tipo:'gasto', id:c.id, fecha:c.fecha_compra, concepto:c.concepto || '', proveedor:c.proveedor || '', rubro:c.rubro || rubroDeTexto(c.concepto), valor:_num(c.valor_total),
+    soportes: sop.filter(s => s.compra_id === c.id) }));
+  const jornales = (S.cache.jornales || []).filter(j => j.proyecto_id === p.id).map(j => ({
+    tipo:'jornal', id:j.id, fecha:j.fecha, concepto:`Jornal ${j.trabajador}: ${j.dias} día(s)${j.nota ? ' · ' + j.nota : ''}`, proveedor:j.trabajador || '', rubro:'Mano de obra', valor:_num(j.valor_total),
+    soportes: sop.filter(s => s.jornal_id === j.id) }));
+  return [...compras, ...jornales].sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha));
+}
+function resumenProyecto(p){
+  const movs = movimientosProyecto(p);
+  const invertido = movs.reduce((a,m) => a + m.valor, 0), monto = _num(p?.monto);
+  const rubros = {}; movs.forEach(m => rubros[m.rubro] = (rubros[m.rubro] || 0) + m.valor);
+  const conSoporte = movs.filter(m => m.soportes.length).length;
+  return { movs, invertido, monto, saldo: monto ? monto - invertido : null, pct: monto ? Math.min(100, Math.round(invertido / monto * 1000) / 10) : null,
+    rubros: Object.entries(rubros).sort((a,b) => b[1] - a[1]), conSoporte, generales: (S.cache.soportes || []).filter(s => s.proyecto_id === p?.id && !s.compra_id && !s.jornal_id) };
+}
+
+/* Tarjeta en Dinero */
+function tarjetaPrestamo(){
+  const p = proyectoPrincipal(); if (!p) return '';
+  const R = resumenProyecto(p);
+  return plegable('dinero-prestamo', `<i class="ti ti-building-bank"></i> ${esc(p.nombre)}`, `
+    <div class="map-dims rend-grid" style="margin-bottom:8px">
+      <div><b>${R.monto ? fmtMoney(R.monto) : '—'}</b>Prestado</div><div><b>${fmtMoney(R.invertido)}</b>Invertido</div><div><b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b>Por invertir</div>
+    </div>
+    ${R.pct != null ? `<div class="ciclo-bar"><div class="ciclo-bar-fill" style="width:${R.pct}%"></div></div><div class="ciclo-info"><span>${R.pct.toLocaleString('es-CO')}% invertido</span><span>${R.conSoporte} de ${R.movs.length} con soporte</span></div>` : `<div class="text-tiny" style="color:var(--tx3)">Falta el monto del préstamo · ${R.conSoporte} de ${R.movs.length} gastos con soporte</div>`}
+    <button class="btn btn-primary btn-block mt12" onclick="abrirPrestamo('${p.id}')"><i class="ti ti-folder-open"></i> Abrir préstamo</button>`,
+    { abierta: true, resumen: `${fmtMoney(R.invertido)}` });
+}
+window.abrirPrestamo = function(id){ S.activeProyecto = id; Nav.push(); render(); window.scrollTo(0, 0); };
+
+/* Pantalla del préstamo */
+function renderPrestamo(){
+  const p = (S.cache.proyectos || []).find(x => x.id === S.activeProyecto);
+  if (!p){ S.activeProyecto = null; return renderDinero(); }
+  const R = resumenProyecto(p), lote = (S.cache.lotes || []).find(l => l.id === p.lote_id);
+  const chipSop = s => s.tipo === 'application/pdf'
+    ? `<button class="sop-chip" onclick="verSoporte('${s.id}')" title="${escA(s.nombre||'PDF')}"><i class="ti ti-file-type-pdf"></i></button>`
+    : `<img class="sop-thumb" loading="lazy" src="${esc(s.url)}" onclick="verSoporte('${s.id}')" alt="">`;
+  const fila = m => `<div class="mini-list-item" style="align-items:flex-start">
+      <div class="icon-pill ${m.tipo === 'jornal' ? 'ip-brown' : 'ip-red'}" style="width:30px;height:30px;font-size:15px"><i class="ti ${m.tipo === 'jornal' ? 'ti-user' : 'ti-receipt'}"></i></div>
+      <div class="mini-list-body">
+        <div class="mini-list-title">${esc(m.concepto)}</div>
+        <div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(m.fecha)}</span><span>${esc(m.rubro)}</span>${m.proveedor && m.tipo === 'gasto' ? `<span>${esc(m.proveedor)}</span>` : ''}</div>
+        <div class="sop-fila">${m.soportes.map(chipSop).join('')}<button class="sop-chip sop-add" onclick="adjuntarSoporte('${m.tipo}','${m.id}')" title="Adjuntar foto o PDF"><i class="ti ti-paperclip"></i>${m.soportes.length ? '' : ' Soporte'}</button></div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-weight:700;color:var(--rd);font-feature-settings:'tnum'">${fmtMoney(m.valor)}</div>
+        <div class="row gap6" style="justify-content:flex-end;margin-top:4px">
+          <button class="btn btn-sm btn-ghost" onclick="${m.tipo === 'jornal' ? `flowEditJornal('${m.id}')` : `editarGastoPrestamo('${m.id}')`}" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-sm btn-ghost" onclick="quitarDelPrestamo('${m.tipo}','${m.id}')" style="padding:4px;border:none;color:var(--tx3)" title="Quitar del préstamo (no lo borra)"><i class="ti ti-link-off"></i></button>
+          <button class="btn btn-sm btn-ghost" onclick="${m.tipo === 'jornal' ? `flowDeleteJornal('${m.id}')` : `flowDeleteGasto('${m.id}','${escA(m.concepto)}')`}" style="padding:4px;border:none;color:var(--rd)" title="Borrar"><i class="ti ti-trash"></i></button>
+        </div>
+      </div>
+    </div>`;
+  return `<div class="panel">
+    <button class="lote-back" onclick="S.activeProyecto=null; Nav.push(); render();"><i class="ti ti-arrow-left"></i> Volver a Dinero</button>
+    <div class="lote-detail-header"><div class="lote-detail-title">${esc(p.nombre)}</div>
+      <div class="lote-detail-sub">${esc(p.entidad || 'Entidad sin definir')}${lote ? ' · Lote ' + esc(lote.codigo) : ''}${p.fecha_desembolso ? ' · desembolso ' + fmtFecha(p.fecha_desembolso) : ''}${p.plazo_meses ? ' · ' + p.plazo_meses + ' meses' : ''}${p.cuota ? ' · cuota ' + fmtMoney(p.cuota) : ''}</div></div>
+    <div class="row gap6" style="flex-wrap:wrap;margin:8px 0"><button class="btn btn-sm btn-soft" onclick="editarPrestamo('${p.id}')"><i class="ti ti-edit"></i> Datos del préstamo</button><button class="btn btn-sm btn-blue" onclick="informePrestamo('${p.id}')"><i class="ti ti-report"></i> Informe para el banco</button></div>
+    <div class="card" style="border-left:3px solid var(--gm)">
+      <div class="map-dims rend-grid" style="margin-bottom:8px;background:none;border:none;padding:0">
+        <div><b>${R.monto ? fmtMoney(R.monto) : '—'}</b>Prestado</div><div><b style="color:var(--rd)">${fmtMoney(R.invertido)}</b>Invertido</div><div><b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b>Por invertir</div>
+      </div>
+      ${R.pct != null ? `<div class="ciclo-bar"><div class="ciclo-bar-fill" style="width:${R.pct}%"></div></div><div class="ciclo-info"><span>${R.pct.toLocaleString('es-CO')}% del préstamo invertido</span></div>` : `<div class="text-tiny" style="color:var(--tx3)">Toca «Datos del préstamo» para poner el monto prestado.</div>`}
+      <div class="text-tiny" style="margin-top:6px">${R.movs.length} gasto(s) · ${R.conSoporte} con soporte${R.movs.length - R.conSoporte ? ` · <b style="color:var(--yl)">${R.movs.length - R.conSoporte} sin soporte</b>` : ''}</div>
+    </div>
+    <div class="row gap6 mt12" style="flex-wrap:wrap">
+      <button class="btn btn-red flex1" onclick="nuevoGastoPrestamo('${p.id}')"><i class="ti ti-plus"></i> Gasto</button>
+      <button class="btn btn-yellow flex1" onclick="nuevoJornalPrestamo('${p.id}')"><i class="ti ti-user"></i> Jornal</button>
+      <button class="btn btn-soft flex1" onclick="asignarAlPrestamo('${p.id}')"><i class="ti ti-link"></i> Traer gastos</button>
+    </div>
+    ${plegable('prestamo-rubros', `<i class="ti ti-chart-pie"></i> Por rubro`, R.rubros.length ? `<div class="card" style="padding:6px 12px">${R.rubros.map(([r, v]) => `<div class="lote-cost-row"><span>${esc(r)}</span><span style="font-weight:700;font-feature-settings:'tnum'">${fmtMoney(v)} <span class="text-tiny">${R.invertido ? Math.round(v / R.invertido * 100) : 0}%</span></span></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Aún no hay gastos en el préstamo.</div>`, { abierta: true, resumen: String(R.rubros.length) })}
+    ${plegable('prestamo-gastos', `<i class="ti ti-receipt"></i> Gastos del préstamo`, R.movs.length ? `<div class="card">${R.movs.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Registra gastos con «+ Gasto» o trae gastos que ya estaban anotados con «Traer gastos».</div>`, { abierta: true, resumen: fmtMoney(R.invertido) })}
+    ${plegable('prestamo-docs', `<i class="ti ti-files"></i> Documentos del préstamo`, `<div class="text-tiny" style="margin-bottom:6px">Pagaré, carta de aprobación, cotizaciones, fotos de la obra… (no van ligados a un gasto).</div>
+      <div class="sop-fila">${R.generales.map(chipSop).join('')}<button class="sop-chip sop-add" onclick="adjuntarSoporte('proyecto','${p.id}')"><i class="ti ti-paperclip"></i> Subir</button></div>`, { resumen: String(R.generales.length) })}
+    ${p.notas ? `<div class="spec-box mt12">${esc(p.notas)}</div>` : ''}
+  </div>`;
+}
+
+/* ── Formularios ── */
+window.editarPrestamo = async function(id){
+  const p = (S.cache.proyectos || []).find(x => x.id === id); if (!p) return;
+  const loteOpts = [{ value:'', label:'Sin lote' }, ...(S.cache.lotes || []).map(l => ({ value:l.id, label:`${l.codigo} · ${l.cultivo}` }))];
+  const r = await M.form({ title:'Datos del préstamo', okText:'Guardar', fields:[
+    { name:'nombre', label:'Nombre', type:'text', required:true, initial: p.nombre },
+    { name:'entidad', label:'Entidad', type:'text', initial: p.entidad || '' },
+    { name:'monto', label:'Monto prestado', type:'money', initial: p.monto || '' },
+    { name:'fecha_desembolso', label:'Fecha del desembolso', type:'date', initial: p.fecha_desembolso || '' },
+    { name:'plazo_meses', label:'Plazo (meses, opcional)', type:'number', initial: p.plazo_meses != null ? String(p.plazo_meses) : '' },
+    { name:'cuota', label:'Valor de la cuota (opcional)', type:'money', initial: p.cuota || '' },
+    { name:'lote_id', label:'Lote del proyecto', type:'select', options: loteOpts, initial: p.lote_id || '' },
+    { name:'notas', label:'Notas', type:'textarea', initial: p.notas || '' }
+  ]});
+  if (!r) return;
+  const r2 = await guardarFila('proyectos', id, { nombre:r.nombre, entidad:r.entidad || null, monto: numPlata(r.monto) || null, fecha_desembolso: r.fecha_desembolso || null,
+    plazo_meses: parseInt(r.plazo_meses) || null, cuota: numPlata(r.cuota) || null, lote_id: r.lote_id || null, notas: r.notas || null });
+  toast(r2.success ? '✅ Préstamo actualizado' : r2.msg); if (r2.success) render();
+};
+async function guardarFila(tabla, id, cambios){
+  if (!S.isOnline) return { success:false, msg:'Necesitas conexión' };
+  const { error } = await sb.from(tabla).update(cambios).eq('id', id);
+  if (error) return { success:false, msg:'Error BD: ' + error.message };
+  await refreshAll(); return { success:true };
+}
+const _rubroOpts = () => RUBROS.map(x => ({ value:x, label:x }));
+window.nuevoGastoPrestamo = async function(proyectoId){
+  const p = (S.cache.proyectos || []).find(x => x.id === proyectoId);
+  const r = await M.form({ title:'Gasto del préstamo', sub:'También cuenta en los gastos generales y en el costo del lote del invernadero.', okText:'Guardar', fields:[
+    { name:'concepto', label:'¿Qué se compró o pagó?', type:'text', required:true, placeholder:'Ej: 40 guaduas inmunizadas' },
+    { name:'proveedor', label:'Proveedor (opcional)', type:'text', placeholder:'Ej: Ferretería El Cafetal' },
+    { name:'valor', label:'Valor total', type:'money', required:true },
+    { name:'rubro', label:'Rubro', type:'select', options: _rubroOpts(), initial:'Materiales' },
+    { name:'fecha', label:'Fecha', type:'date', initial: hoyISO() }
+  ]});
+  if (!r) return;
+  const resp = await HANDLERS.add_gasto({ concepto:r.concepto, categoria:'Inversión invernadero', valor_total: numPlata(r.valor), fecha: r.fecha || null,
+    lote_id: p?.lote_id || null, proyecto_id: proyectoId, rubro: r.rubro, proveedor: r.proveedor || null });
+  toast(resp.success ? '✅ Gasto del préstamo guardado' : resp.msg); render();
+  if (resp.success && resp.id && await M.confirm({ title:'¿Adjuntar soporte?', body:'¿Quieres subir ya la foto o el PDF de la factura de este gasto?', okText:'Sí, adjuntar', cancelText:'Después' })) adjuntarSoporte('gasto', resp.id);
+};
+window.nuevoJornalPrestamo = async function(proyectoId){
+  const p = (S.cache.proyectos || []).find(x => x.id === proyectoId);
+  const r = await M.form({ title:'Jornal del préstamo', okText:'Guardar', fields:[
+    { name:'trabajador', label:'Trabajador', type:'text', required:true },
+    { name:'dias', label:'Días trabajados', type:'number', required:true, initial:'1' },
+    { name:'valor_dia', label:'Valor por día', type:'money', required:true },
+    { name:'nota', label:'¿Qué hizo?', type:'text', placeholder:'Ej: armado de estructura' },
+    { name:'fecha', label:'Fecha', type:'date', initial: hoyISO() }
+  ]});
+  if (!r) return;
+  const resp = await HANDLERS.registrar_jornal({ trabajador:r.trabajador, dias:parseFloat(r.dias) || 1, valor_dia: numPlata(r.valor_dia), lote_id: p?.lote_id || null, nota:r.nota || null, fecha:r.fecha || null, proyecto_id: proyectoId });
+  toast(resp.success ? `✅ Jornal · ${fmtMoney(resp.total)}` : resp.msg); render();
+};
+window.editarGastoPrestamo = async function(id){
+  const c = (S.cache.compras || []).find(x => x.id === id); if (!c) return;
+  const r = await M.form({ title:'Editar gasto del préstamo', okText:'Guardar cambios', fields:[
+    { name:'concepto', label:'Concepto', type:'text', required:true, initial: c.concepto || '' },
+    { name:'proveedor', label:'Proveedor', type:'text', initial: c.proveedor || '' },
+    { name:'valor', label:'Valor total', type:'money', required:true, initial: c.valor_total },
+    { name:'rubro', label:'Rubro', type:'select', options: _rubroOpts(), initial: c.rubro || rubroDeTexto(c.concepto) },
+    { name:'fecha', label:'Fecha', type:'date', initial: toDateInput(c.fecha_compra) }
+  ]});
+  if (!r) return;
+  const r2 = await guardarFila('compras', id, { concepto:r.concepto, proveedor:r.proveedor || null, valor_total: numPlata(r.valor), rubro:r.rubro, fecha_compra: r.fecha || c.fecha_compra });
+  toast(r2.success ? '✅ Gasto actualizado' : r2.msg); if (r2.success) render();
+};
+window.quitarDelPrestamo = async function(tipo, id){
+  const ok = await M.confirm({ title:'Quitar del préstamo', body:'El gasto sigue guardado en Dinero; solo deja de contar en el préstamo. ¿Continuar?', okText:'Sí, quitar', cancelText:'Cancelar' });
+  if (!ok) return;
+  const r = await guardarFila(tipo === 'jornal' ? 'jornales' : 'compras', id, { proyecto_id: null });
+  toast(r.success ? 'Quitado del préstamo' : r.msg); if (r.success) render();
+};
+/* Traer gastos y jornales ya anotados al préstamo (primero los del lote del invernadero) */
+window.asignarAlPrestamo = async function(proyectoId){
+  const p = (S.cache.proyectos || []).find(x => x.id === proyectoId); if (!p) return;
+  const cand = [
+    ...(S.cache.compras || []).filter(c => c.origen !== 'consumo' && c.proyecto_id !== proyectoId).map(c => ({ tipo:'gasto', id:c.id, fecha:c.fecha_compra, txt:c.concepto, valor:_num(c.valor_total), lote:c.lote_id })),
+    ...(S.cache.jornales || []).filter(j => j.proyecto_id !== proyectoId).map(j => ({ tipo:'jornal', id:j.id, fecha:j.fecha, txt:`Jornal ${j.trabajador}${j.nota ? ' · ' + j.nota : ''}`, valor:_num(j.valor_total), lote:j.lote_id })),
+  ].sort((a,b) => ((b.lote === p.lote_id) - (a.lote === p.lote_id)) || (tsOrden(b.fecha) - tsOrden(a.fecha)));
+  const filas = cand.map((m, i) => `<label class="asig-fila" data-txt="${escA(_normTxt(m.txt))}"><input type="checkbox" data-i="${i}"><span style="flex:1;min-width:0"><b>${esc(m.txt)}</b><br><span class="text-tiny">${fmtFecha(m.fecha)}${m.lote === p.lote_id ? ' · <b style="color:var(--g)">lote del invernadero</b>' : ''}</span></span><span style="font-weight:700;font-feature-settings:'tnum'">${fmtMoney(m.valor)}</span></label>`).join('');
+  const html = `<div class="modal-h"><i class="ti ti-link"></i> Traer gastos al préstamo</div><div class="modal-sub">Marca los gastos o jornales que se pagaron con el préstamo. Arriba están los del lote del invernadero.</div>
+    <input class="modal-input" id="asig-q" placeholder="Buscar…" autocomplete="off" style="margin-bottom:8px">
+    <div class="asig-lista">${filas || '<div class="text-tiny" style="padding:12px">No hay gastos para traer.</div>'}</div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="M._close(null)">Cancelar</button><button class="btn btn-primary" id="asig-ok"><i class="ti ti-check"></i> Traer marcados</button></div>`;
+  const prom = M._open(html);
+  document.getElementById('asig-q').oninput = e => { const q = _normTxt(e.target.value); document.querySelectorAll('.asig-fila').forEach(f => f.style.display = !q || f.dataset.txt.includes(q) ? '' : 'none'); };
+  document.getElementById('asig-ok').onclick = () => M._close([...document.querySelectorAll('.asig-fila input:checked')].map(x => cand[+x.dataset.i]));
+  const sel = await prom; if (!sel || !sel.length) return;
+  if (!S.isOnline){ toast('Necesitas conexión'); return; }
+  const comprasIds = sel.filter(m => m.tipo === 'gasto').map(m => m.id), jornIds = sel.filter(m => m.tipo === 'jornal').map(m => m.id);
+  let error = null;
+  if (comprasIds.length) ({ error } = await sb.from('compras').update({ proyecto_id: proyectoId }).in('id', comprasIds));
+  if (!error && jornIds.length) ({ error } = await sb.from('jornales').update({ proyecto_id: proyectoId }).in('id', jornIds));
+  if (error){ toast('Error: ' + error.message); return; }
+  // Rubro sugerido para los gastos traídos que no tenían
+  for (const m of sel.filter(m => m.tipo === 'gasto')){ const c = (S.cache.compras || []).find(x => x.id === m.id); if (c && !c.rubro) await sb.from('compras').update({ rubro: rubroDeTexto(c.concepto) }).eq('id', m.id); }
+  await refreshAll(); toast(`✅ ${sel.length} movimiento(s) agregados al préstamo`); render();
+};
+
+/* ── Soportes: fotos y PDF ── */
+async function _comprimirImagen(file){
+  return await new Promise(ok => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 1800, esc2 = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * esc2); c.height = Math.round(img.height * esc2);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => ok(b || file), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); ok(file); };
+    img.src = url;
+  });
+}
+window.adjuntarSoporte = function(tipo, id){
+  if (!S.isOnline){ toast('Necesitas internet para subir soportes'); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*,application/pdf'; inp.multiple = true;
+  inp.onchange = async () => {
+    const files = [...(inp.files || [])]; if (!files.length) return;
+    const p = proyectoPrincipal();
+    const proyecto_id = tipo === 'proyecto' ? id : ((tipo === 'gasto' ? (S.cache.compras || []).find(c => c.id === id) : (S.cache.jornales || []).find(j => j.id === id))?.proyecto_id || p?.id || null);
+    let ok = 0;
+    for (const f of files){
+      const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+      if (!esPdf && !/^image\//.test(f.type)){ toast(`«${f.name}» no es foto ni PDF`); continue; }
+      if (f.size > 20 * 1024 * 1024){ toast(`«${f.name}» pesa más de 20 MB`); continue; }
+      toast(`⬆️ Subiendo ${f.name}…`);
+      const cuerpo = esPdf ? f : await _comprimirImagen(f);
+      const limpio = _normTxt(f.name).replace(/[^a-z0-9.]+/g, '-').slice(-60);
+      const ruta = `${proyecto_id || 'general'}/${Date.now()}-${Math.floor(Math.random()*9999)}-${esPdf ? limpio : limpio.replace(/\.[a-z0-9]+$/, '') + '.jpg'}`;
+      const { error } = await sb.storage.from('soportes').upload(ruta, cuerpo, { contentType: esPdf ? 'application/pdf' : 'image/jpeg' });
+      if (error){ toast('Error subiendo: ' + error.message); continue; }
+      const { data } = sb.storage.from('soportes').getPublicUrl(ruta);
+      const fila = { proyecto_id, url: data.publicUrl, ruta, nombre: f.name, tipo: esPdf ? 'application/pdf' : 'image/jpeg',
+        compra_id: tipo === 'gasto' ? id : null, jornal_id: tipo === 'jornal' ? id : null };
+      const { error: e2 } = await sb.from('soportes').insert(fila);
+      if (e2){ toast('Subido pero no quedó registrado: ' + e2.message); continue; }
+      ok++;
+    }
+    await refreshAll(); if (ok) toast(`📎 ${ok} soporte(s) guardado(s)`); render();
+  };
+  inp.click();
+};
+window.verSoporte = function(id){
+  const s = (S.cache.soportes || []).find(x => x.id === id); if (!s) return;
+  const pdf = s.tipo === 'application/pdf';
+  M._open(`<div class="modal-h"><i class="ti ${pdf ? 'ti-file-type-pdf' : 'ti-photo'}"></i> Soporte</div><div class="modal-sub">${esc(s.nombre || '')} · ${fmtFecha(s.creado_en)}</div>
+    ${pdf ? `<div class="spec-box">Documento PDF. Ábrelo para verlo o descargarlo.</div>` : `<img src="${esc(s.url)}" style="width:100%;border-radius:10px;margin-bottom:10px">`}
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn btn-ghost" style="color:var(--rd)" onclick="borrarSoporte('${s.id}')"><i class="ti ti-trash"></i> Borrar</button>
+      <a class="btn btn-primary" href="${esc(s.url)}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Abrir</a>
+    </div>`);
+};
+window.borrarSoporte = async function(id){
+  const s = (S.cache.soportes || []).find(x => x.id === id); if (!s) return;
+  M._close(null);
+  const ok = await M.confirm({ title:'Borrar soporte', body:`¿Eliminar «${esc(s.nombre || 'este archivo')}»? No se puede deshacer.`, okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
+  if (!ok) return;
+  if (s.ruta) await sb.storage.from('soportes').remove([s.ruta]);
+  const { error } = await sb.from('soportes').delete().eq('id', id);
+  if (error){ toast('Error: ' + error.message); return; }
+  await refreshAll(); toast('🗑️ Soporte borrado'); render();
+};
+
+/* ── Informe para el banco: tabla (copiar, Excel) e impresión / PDF ── */
+window.informePrestamo = function(id){
+  const p = (S.cache.proyectos || []).find(x => x.id === id); if (!p) return;
+  const R = resumenProyecto(p);
+  const filas = R.movs.slice().reverse().map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto, proveedor:m.proveedor, rubro:m.rubro, valor:m.valor,
+    soporte: m.soportes.length ? m.soportes.map((s, i) => `${s.tipo === 'application/pdf' ? 'PDF' : 'Foto'} ${i + 1}`).join(', ') : 'FALTA' }));
+  const texto = [`📋 ${p.nombre} · ${p.entidad || ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : '', `Invertido: ${fmtMoney(R.invertido)}`, R.saldo != null ? `Por invertir: ${fmtMoney(R.saldo)}` : '',
+    'Por rubro:', ...R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`), '', ...filas.map(f => `• ${f.fecha} · ${f.concepto} · ${fmtMoney(f.valor)} · soporte: ${f.soporte}`)].filter(x => x !== '').join('\n');
+  abrirInforme({ titulo: `Informe ${p.nombre}`, filtro: `${p.entidad || ''}${R.monto ? ' · prestado ' + fmtMoney(R.monto) : ''}`, n: filas.length, total: R.invertido,
+    cols:[['fecha','Fecha'],['concepto','Concepto'],['proveedor','Proveedor'],['rubro','Rubro'],['valor','Valor'],['soporte','Soporte']], filas, texto,
+    imprimir: () => imprimirPrestamo(p, R) });
+};
+function imprimirPrestamo(p, R){
+  const lote = (S.cache.lotes || []).find(l => l.id === p.lote_id);
+  const filas = R.movs.slice().reverse().map((m, i) => `<tr><td>${i + 1}</td><td>${fmtFecha(m.fecha)}</td><td>${esc(m.concepto)}</td><td>${esc(m.proveedor || '')}</td><td>${esc(m.rubro)}</td><td class="n">${fmtMoney(m.valor)}</td>
+    <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`).join('');
+  const fotos = R.movs.flatMap(m => m.soportes.filter(s => s.tipo !== 'application/pdf').map(s => `<figure><img src="${esc(s.url)}"><figcaption>${fmtFecha(m.fecha)} · ${esc(m.concepto)}</figcaption></figure>`)).join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(p.nombre)} · Finca El Retiro</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
+.res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n{text-align:right;white-space:nowrap}
+.fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:150px;object-fit:cover;border:1px solid #ccc}.fotos figcaption{font-size:10px;color:#555}
+.btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
+<button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
+<h1>${esc(p.nombre)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca${p.entidad ? ' · ' + esc(p.entidad) : ''}${lote ? ' · Lote ' + esc(lote.codigo) : ''}</div>
+<div>Informe generado el ${fmtFechaLarga(fechaLocalISO())}${p.fecha_desembolso ? ' · Desembolso: ' + fmtFecha(p.fecha_desembolso) : ''}${p.plazo_meses ? ' · Plazo: ' + p.plazo_meses + ' meses' : ''}</div>
+<div class="res"><div>Monto prestado<b>${R.monto ? fmtMoney(R.monto) : '—'}</b></div><div>Total invertido<b>${fmtMoney(R.invertido)}</b></div><div>Saldo por invertir<b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b></div><div>Gastos con soporte<b>${R.conSoporte} de ${R.movs.length}</b></div></div>
+<h2>Inversión por rubro</h2><table><tr><th>Rubro</th><th>Valor</th><th>%</th></tr>${R.rubros.map(([r, v]) => `<tr><td>${esc(r)}</td><td class="n">${fmtMoney(v)}</td><td class="n">${R.invertido ? Math.round(v / R.invertido * 100) : 0}%</td></tr>`).join('')}<tr><th>Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
+<h2>Detalle de gastos</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Rubro</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
+${fotos ? `<h2>Registro fotográfico</h2><div class="fotos">${fotos}</div>` : ''}
+${R.generales.length ? `<h2>Documentos del préstamo</h2><ul>${R.generales.map(s => `<li><a href="${esc(s.url)}">${esc(s.nombre || 'Documento')}</a></li>`).join('')}</ul>` : ''}
+</body></html>`;
+  const w = window.open(URL.createObjectURL(new Blob([html], { type:'text/html' })), '_blank');
+  if (!w) toast('Permite las ventanas emergentes para ver el informe');
+}
+
 function renderDinero(){
   /* Los registros origen='consumo' son costo interno por lote: la plata ya salió al comprar el insumo, no se vuelven a sumar a egresos */
   const totalEgresos = egresosTotales();
@@ -4079,6 +4423,7 @@ function renderDinero(){
       <div class="fin-box fin-ingresos"><div class="fin-box-t">Ingresos</div><div class="fin-box-v" style="color:var(--g)">${fmtMoney(totalIngresos)}</div></div>
     </div>
     <div class="balance-card"><div class="balance-label">Balance real</div><div class="balance-val" style="color:${balance>=0?'var(--g)':'var(--rd)'}">${fmtMoney(balance)}</div></div>
+    ${tarjetaPrestamo()}
     ${loteCostHtml}
     <div class="row gap8 mt12"><button class="btn btn-red flex1" id="btn-add-gasto"><i class="ti ti-minus"></i> Gasto</button><button class="btn btn-yellow flex1" onclick="flowNuevoJornal()"><i class="ti ti-user"></i> Jornal</button><button class="btn btn-primary flex1" id="btn-add-ingreso"><i class="ti ti-plus"></i> Ingreso</button></div>
     ${plegable('dinero-movimientos', `<i class="ti ti-history"></i> Últimos movimientos`, `<div class="card">${movList}</div>`, { abierta: true, resumen: String(ultimos.length) })}
@@ -5631,7 +5976,7 @@ function bindAppEvents(){
   document.getElementById('btn-bell')?.addEventListener('click', () => Alerts.showPanel());
   document.getElementById('btn-logout')?.addEventListener('click', showUserMenu);
   document.getElementById('weather-pill')?.addEventListener('click', () => Weather.showPanel());
-  document.querySelectorAll('[data-tab]').forEach(el => el.addEventListener('click', () => { S.tab = el.dataset.tab; S.activeLote = null; S.activeBodegaCat = null; S.activeBodegaSub = null; Voice.cancel(); Nav.push(); render(); }));
+  document.querySelectorAll('[data-tab]').forEach(el => el.addEventListener('click', () => { S.tab = el.dataset.tab; S.activeLote = null; S.activeBodegaCat = null; S.activeBodegaSub = null; S.activeProyecto = null; Voice.cancel(); Nav.push(); render(); }));
   document.getElementById('btn-internet-search')?.addEventListener('click', () => { const q = document.getElementById('internet-search-input').value.trim(); if (q) window.open('https://www.google.com/search?q=' + encodeURIComponent(q), '_blank'); });
   document.getElementById('internet-search-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('btn-internet-search').click(); });
   document.getElementById('btn-voice')?.addEventListener('click', () => Voice.start());
@@ -5729,7 +6074,7 @@ function render(){
 
   let content = '';
   if (S.tab === 'plagas' || S.tab === 'internet') S.tab = 'agente';
-  if (S.tab === 'dinero')    content = renderDinero();
+  if (S.tab === 'dinero')    content = S.activeProyecto ? renderPrestamo() : renderDinero();
   if (S.tab === 'bodega')    content = renderBodega();
   if (S.tab === 'cultivos')  content = renderCultivos();
   if (S.tab === 'tareas')    content = renderTareas();
