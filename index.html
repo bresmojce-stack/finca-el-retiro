@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.2</title>
+<title>Finca El Retiro v12.3</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -957,6 +957,7 @@ const HANDLERS = {
     const payload = { concepto:i.concepto, categoria:i.categoria, valor_total:i.valor_total, lote_id:i.lote_id||null, fecha_compra: i.fecha || fechaLocalISO() };
     if (i.proyecto_id){ payload.proyecto_id = i.proyecto_id; payload.rubro = i.rubro || null; }
     if (i.proveedor) payload.proveedor = i.proveedor;
+    if (i.cantidad) { payload.cantidad = i.cantidad; payload.unidad = i.unidad || null; }
     if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); return {success:true, msg:'Gasto registrado (offline)'}; }
     const { data, error } = await sb.from('compras').insert(payload).select('id').single();
     if (error) return {success:false, msg:'Error BD: ' + error.message};
@@ -1212,10 +1213,11 @@ const HANDLERS = {
     await refreshAll();
     return {success:true};
   },
-  edit_cosecha: async (id, changes) => {
+  edit_cosecha: async (id, changes, flete) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
     const { error } = await sb.from('cosechas').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
+    if (flete !== undefined){ const rf = await HANDLERS.guardar_flete({ ...(flete || { valor_total:0 }), cosecha_id:id }); if (!rf.success){ await refreshAll(); return rf; } }
     await refreshAll();
     return {success:true};
   },
@@ -1281,10 +1283,27 @@ const HANDLERS = {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar cosechas'};
     const payload = { lote_id:i.lote_id||null, volumen_kg:i.kilos, calidad:i.calidad||'normal', observaciones:i.observaciones||null, fecha_recoleccion:i.fecha||fechaLocalISO(), registrado_por_id:S.user?.dbId||null,
       unidad: i.unidad || null, unidades: i.unidades != null ? i.unidades : null, peso_unidad: i.peso_unidad != null ? i.peso_unidad : null, precio_unidad: i.precio_unidad || null };
-    const { error } = await sb.from('cosechas').insert(payload);
+    const { data, error } = await sb.from('cosechas').insert(payload).select('id').single();
     if (error) return {success:false, msg:'Error BD: ' + error.message};
+    let aviso = '';
+    if (i.flete && data?.id){ const rf = await HANDLERS.guardar_flete({ ...i.flete, cosecha_id:data.id }); if (!rf.success) aviso = ' · ⚠️ flete sin guardar: ' + rf.msg; }
     await refreshAll();
-    return {success:true, msg:'Cosecha registrada'};
+    return {success:true, msg:'Cosecha registrada' + aviso, id:data?.id};
+  },
+  /* Flete: lo que se paga por bajar la carga. Va como gasto de Transporte del lote (ligado a la cosecha si se anotó con ella). Valor 0 = quitarlo */
+  guardar_flete: async (f) => {
+    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar el flete'};
+    const prev = f.id || (f.cosecha_id ? (S.cache.compras || []).find(c => c.cosecha_id === f.cosecha_id)?.id : null);
+    if (!(f.valor_total > 0)){
+      if (!prev) return {success:true};
+      const { error } = await sb.from('compras').delete().eq('id', prev);
+      return error ? {success:false, msg:'Error BD: ' + error.message} : {success:true};
+    }
+    const payload = { concepto:f.concepto, categoria:'Transporte', valor_total:f.valor_total, cantidad:f.cantidad || null, unidad:f.unidad || null, lote_id:f.lote_id || null,
+      fecha_compra:f.fecha || fechaLocalISO(), proveedor:f.proveedor || null, origen:'manual', cosecha_id:f.cosecha_id || null };
+    const { error } = prev ? await sb.from('compras').update(payload).eq('id', prev) : await sb.from('compras').insert(payload);
+    if (error) return {success:false, msg:'Error BD: ' + error.message};
+    return {success:true};
   },
   registrar_jornal: async (i) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar jornales'};
@@ -1881,6 +1900,7 @@ function _raiz(w){
   return r.length >= 4 ? r : w;
 }
 function _categoria(t){
+  if (/\bflete|acarreo|transporte de (la )?(carga|cosecha)|bajar la carga/.test(t)) return 'Transporte';
   if (/jornal/.test(t)) return 'jornales';
   if (/abon|urea|fertiliz|triple|\bcal\b|gallinaza|compost|dap\b|potasio|nitrato/.test(t)) return 'Nutrición';
   if (/fungic|insectic|herbic|acaric|veneno|fumig|mancozeb|glifosato|roundup|coadyuv/.test(t)) return 'Agroquímicos';
@@ -2064,6 +2084,13 @@ function interpretarLocal(dominio, texto){
       if (/\bvend\w*|\bventa\b|\bingres\w*|me pagaron|nos pagaron|\bcobr\w*|\brecibi\b/.test(t2))
         return { accion:'ingreso', concepto: limpio || 'Venta', valor: total || '', fecha, resumen: 'Ingreso / venta' + cuenta, _seguro: !!total };
       const delPrestamo = /\bprestamo\b|construccion del invernadero|estructura del invernadero/.test(t2);
+      // Flete de la carga: por cada canastilla/bulto o por toda la carga
+      if (/\bflete|\bacarreo/.test(t2) && !delPrestamo){
+        const un = mc ? _empaqueNorm(mc[0].trim().split(/\s+/).slice(1).join(' ')) : null, porUnidad = cant > 0 && un && un !== 'kg';
+        const detalle = porUnidad ? _plural(cant, un) + (plata && total !== plata.v ? ' × ' + fmtMoney(plata.v) : '') : 'carga completa';
+        return { accion:'gasto', concepto:`Flete${lote ? ' cosecha ' + lote.codigo : ''}: ${detalle}`, valor: total || '', categoria:'Transporte', lote_codigo: lote?.codigo || null, fecha,
+          cantidad: porUnidad ? cant : 1, unidad: porUnidad ? un : 'carga', prestamo:false, rubro:'Transporte', resumen: 'Flete' + cuenta, _seguro: !!total };
+      }
       const limpio2 = delPrestamo ? _frase(limpio.replace(/[,.]?\s*(va |es |fue )?(al|del|con el|para el|por el) pr[eé]stamo\b/i, '')) : limpio;
       return { accion:'gasto', concepto: limpio2, valor: total || '', categoria: delPrestamo ? 'Inversión invernadero' : _categoria(t2), lote_codigo: lote?.codigo || null, fecha,
         prestamo: delPrestamo, rubro: rubroDeTexto(limpio2), resumen: (delPrestamo ? 'Gasto del préstamo' : 'Gasto') + cuenta, _seguro: !!(total && limpio2) };
@@ -2104,6 +2131,7 @@ function dominioDeTexto(texto){
   const t = _canon(_txt(texto).replace(/\s+/g, ' ').trim());
   if (_pareceAPregunta(texto)) return null;
   if (/\bjornal|\bjornales\b/.test(t) || (/\btrabaj(o|aron|amos)\b/.test(t) && /\b(dias?|mil|\$)/.test(t))) return 'dinero';
+  if (/\bflete|\bacarreo/.test(t) && _plata(t)) return 'dinero';
   if (/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|tenemos que|toca|tarea)\b/.test(t)) return 'tareas';
   if (/\b(crea\w*|nuevo|nueva|agreg\w*)\b.*\blote\b/.test(t) || (/\blote\b/.test(t) && new RegExp('\\b(' + Object.keys(ESTADOS_LOTE).join('|') + ')\\b').test(t) && /\b(pasa|paso|esta|entro|quedo|cambia|cambiar|ponlo|pon)\b/.test(t))) return 'cultivos';
   if (/\b(ya )?(termine|terminamos|complete|completamos|acabe|acabamos)\b/.test(t) && _tareaPendiente(t)) return 'tareas';
@@ -2150,7 +2178,7 @@ async function llamarGemini(req){
    listado completo con totales a partir de TODOS los registros.
    ═══════════════════════════════════════════════════════════════ */
 const RX_PIDE = /^(y\s+)?(por favor\s+)?(en (que|donde)|donde|rentabilidad|rendimiento|cual (es|fue) (el|la)|como (vamos|va|nos fue|esta la finca|van)|(el |los )?productos? mas|dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
-const RX_TEMAS = '(insumos|productos|compras|gastos|jornales|cosechas|fumigaciones|fertilizaciones|abonadas|podas|riegos|labores|tareas|ventas|ingresos|aplicaciones|inventario|plagas|lotes|salidas|consumos)';
+const RX_TEMAS = '(insumos|productos|compras|gastos|jornales|cosechas|fumigaciones|fertilizaciones|abonadas|podas|riegos|labores|tareas|ventas|ingresos|aplicaciones|inventario|plagas|lotes|salidas|consumos|fletes)';
 const RX_FUERTE = new RegExp('\\b(lista|listado|listar|informe|reporte|resumen|historial|inventario|ultima vez|primera vez|hace cuanto|cuantas veces)\\b|\\b' + RX_TEMAS +
   '\\b.*\\b(este mes|esta semana|del mes|mes pasado|semana pasada|este ano|ano pasado|por (lote|mes|categoria|producto|trabajador)|' + MESES.join('|') + ')\\b');
 const RX_EMPIEZA_TEMA = new RegExp('^(y\\s+)?(las|los|el|la)?\\s*' + RX_TEMAS + '\\b');
@@ -2257,6 +2285,11 @@ const FUENTES_INF = {
       return _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor, it?.subcategoria], c.lote_id,
         { fecha:_fechaCorta(c.fecha_compra), concepto:c.concepto || '', categoria:c.categoria || 'otro', cat:it?.categoria || c.categoria, sub:subcatActual(it?.subcategoria), lote:_codLote(c.lote_id), valor:_num(c.valor_total) }); }),
     linea: f => `• ${f.fecha} · ${f.concepto}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
+  fletes: { titulo:'Fletes de la cosecha', unidad:'$', fechas:true,
+    cols:[['fecha','Fecha'],['lote','Lote'],['detalle','Detalle'],['quien','Llevó'],['valor','Valor']],
+    filas:() => comprasFinca().filter(c => c.categoria === 'Transporte').map(c => _fila2(c.fecha_compra, [c.concepto, c.proveedor, 'flete transporte'], c.lote_id,
+      { fecha:_fechaCorta(c.fecha_compra), lote:_codLote(c.lote_id) || 'Finca', detalle:textoFlete(c), concepto:c.concepto || '', quien:c.proveedor || '', persona:c.proveedor || '', categoria:'Transporte', valor:_num(c.valor_total) })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.detalle}${f.quien ? ' · ' + f.quien : ''}` },
   salidas: { titulo:'Insumos usados (salidas de bodega)', unidad:'$', fechas:true,
     cols:[['fecha','Fecha'],['concepto','Detalle'],['lote','Lote'],['valor','Costo']],
     filas:() => comprasFinca().filter(c => c.origen === 'consumo').map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria], c.lote_id,
@@ -2318,7 +2351,8 @@ function entenderInforme(texto){
   let fuente = null;
   if (/\bprestamo\b|\binversion del invernadero\b|\binvertido (del|en el) (prestamo|invernadero)\b/.test(t0) && proyectoPrincipal()) return { accion:'informe', fuente:'prestamo', op:'lista', palabras:[], _seguro:true };
   const hayProductoAplicado = () => { const ns = _nombresAplicados(); return t.split(' ').some(w => w.length >= 4 && [...ns].some(n => n.startsWith(w) || w.startsWith(n))) || !!_producto(t); };
-  if (/\bcompr/.test(t)) fuente = 'compras';
+  if (/\bflete|\bacarreo/.test(t)) fuente = 'fletes';
+  else if (/\bcompr/.test(t)) fuente = 'compras';
   else if (/\b(inventario|bodega|stock|existencias?|agotad\w*|por vencer|vencid\w*|se (esta|estan) acabando)\b/.test(t) || /\b(que|cuales) (insumos|productos) (hay|tengo|tenemos|quedan)\b/.test(t)) fuente = 'inventario';
   else if (/\bjornal|mano de obra|\btrabajador/.test(t)) fuente = 'jornales';
   else if (/\b(salidas?|consumos?|descontad\w*)\b/.test(t)) fuente = 'salidas';
@@ -2588,6 +2622,7 @@ const AYUDA = `Esto es lo que entiendo sin IA (no gasta cuota):
 • «cosechamos 20 canastillas de grueso a 80 mil y 15 de parejo a 60 mil en el tronus»
 • «entraron 2 bultos de urea a 80 mil», «usé medio litro de mancozeb»
 • «pagué 2 jornales a Gerardo a 65 mil», «gasté 50 mil en transporte», «vendimos tomate por 1,5 millones»
+• «pagué flete de 40 canastillas a 7 mil del tomate», «flete de 300 mil por la carga de cebolla»
 • «recuérdame fumigar el viernes», «ya terminé de fumigar el lote 2»
 • «recuerda que el lote 3 se riega cada 3 días» (lo guardo como apunte)
 
@@ -2989,6 +3024,7 @@ async function ejecutarAccion(v){
     case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) await refreshAll(); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
     case 'gasto':{ const lote=resolverLote(v.lote_codigo); const pr = v.prestamo==='si' ? proyectoPrincipal() : null;
       const r=await HANDLERS.add_gasto({concepto:v.concepto,categoria:pr?'Inversión invernadero':(v.categoria||'otro'),valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||pr?.lote_id||null,fecha:v.fecha||null,
+        ...(!pr && v.categoria==='Transporte' && v.cantidad ? {cantidad:parseFloat(v.cantidad)||1, unidad:v.unidad||'carga'} : {}),
         ...(pr?{proyecto_id:pr.id, rubro:v.rubro||rubroDeTexto(v.concepto)}:{})});
       return r.success ? (pr ? `💸 Gasto del préstamo registrado (${v.rubro}). Adjunta la factura en Dinero → Préstamo.` : '💸 Gasto registrado') : ('⚠️ '+r.msg); }
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
@@ -3981,14 +4017,16 @@ function renderCultivos(){
         const jornL = jornalesFinca().filter(j => j.lote_id === l.id);
         const totInsumos = consumos.reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const totJorn = jornL.reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
-        const otros = comprasL.filter(c=>c.origen!=='consumo').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
-        const total = totInsumos + totJorn + otros;
+        const fletes = comprasL.filter(c=>c.categoria==='Transporte').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
+        const otros = comprasL.filter(c=>c.origen!=='consumo' && c.categoria!=='Transporte').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
+        const total = totInsumos + totJorn + otros + fletes;
         if (total === 0 && !jornL.length) return '';
         let h = `<div class="card" style="border-left:3px solid var(--gm)">
           <div class="sec-t" style="margin:0 0 8px"><span><i class="ti ti-report-money"></i> Costo total del lote</span></div>
-          <div class="inv-grid" style="grid-template-columns:repeat(${otros>0?4:3},1fr);border-top:none;padding-top:0;margin-top:0">
+          <div class="inv-grid" style="grid-template-columns:repeat(${3+(otros>0)+(fletes>0)},1fr);border-top:none;padding-top:0;margin-top:0">
             <div class="inv-stat">Insumos<b style="color:var(--rd)">${fmtMoney(totInsumos)}</b></div>
             <div class="inv-stat">Jornales<b style="color:var(--rd)">${fmtMoney(totJorn)}</b></div>
+            ${fletes>0?`<div class="inv-stat">Fletes<b style="color:var(--rd)">${fmtMoney(fletes)}</b></div>`:''}
             ${otros>0?`<div class="inv-stat">Otros<b style="color:var(--rd)">${fmtMoney(otros)}</b></div>`:''}
             <div class="inv-stat active">Total<b>${fmtMoney(total)}</b></div>
           </div>
@@ -4027,7 +4065,10 @@ function renderCultivos(){
       })()}
       ${(() => {
         const cs = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id);
-        const btnCos = `<button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button>`;
+        const btnCos = `<button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button>`
+          + (cs.length ? `<button class="btn btn-sm btn-blue" onclick="flowNuevoFlete('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-truck"></i> Flete</button>` : '');
+        const fls = fletesLote(l.id).sort((a,b) => tsOrden(b.fecha_compra) - tsOrden(a.fecha_compra));
+        const totFlete = fls.reduce((a,f) => a + (parseFloat(f.valor_total)||0), 0);
         if (!cs.length) return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote. Categorías: ${esc(categoriasLote(l).join(', '))} <button class="ver-mas" onclick="flowCategoriasLote('${l.id}')">cambiar</button> · Siembra: <button class="ver-mas" onclick="flowSiembraLote('${l.id}')">${l.siembra_cantidad ? _plural(parseFloat(l.siembra_cantidad), l.siembra_unidad || perfilCultivo(l).siembra) : 'agregar'}</button></div>`, { resumen:'0', acciones: btnCos });
         const totalKg = cs.reduce((a,c)=>a+(parseFloat(c.volumen_kg)||0),0);
         const R = rendimientoLote(l);
@@ -4039,8 +4080,11 @@ function renderCultivos(){
             ${R.categorias.map(g => `<tr><td>${esc(g.categoria)}</td><td class="num">${g.kg.toLocaleString('es-CO', { maximumFractionDigits:1 })}</td><td class="num">${g.pct.toLocaleString('es-CO')}%</td><td>${esc(g.unidadesTxt || '—')}</td><td class="num">${g.valor ? fmtMoney(g.valor) : '—'}</td></tr>`).join('')}
             <tr><td><b>Total</b></td><td class="num"><b>${R.kg.toLocaleString('es-CO', { maximumFractionDigits:1 })}</b></td><td class="num">100%</td><td></td><td class="num"><b>${R.valor ? fmtMoney(R.valor) : '—'}</b></td></tr>
           </tbody></table></div>
-          <div class="text-tiny" style="margin:4px 0 8px;color:var(--tx3)">Las categorías sin precio no suman al valor. Edita la cosecha para ponerle precio.</div>`;
-        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title"><b>${esc(c.calidad ? c.calidad[0].toUpperCase() + c.calidad.slice(1) : 'Sin categoría')}</b> · ${textoCosecha(c)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
+          <div class="text-tiny" style="margin:4px 0 8px;color:var(--tx3)">Las categorías sin precio no suman al valor. Edita la cosecha para ponerle precio.</div>
+          ${fls.length ? `<div class="sec-t" style="margin:8px 0 6px"><span><i class="ti ti-truck"></i> Fletes · ${fmtMoney(totFlete)}</span></div>
+          <div class="card" style="padding:4px 14px;margin-bottom:8px">${fls.map(f => `<div class="mini-list-item"><div class="icon-pill ip-blue" style="width:28px;height:28px;font-size:14px"><i class="ti ti-truck"></i></div><div class="mini-list-body"><div class="mini-list-title">${textoFlete(f)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(f.fecha_compra)}</span>${f.proveedor?`<span>${esc(f.proveedor)}</span>`:''}${f.cosecha_id?'<span>anotado con la cosecha</span>':''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowNuevoFlete('${l.id}','${f.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowBorrarFlete('${f.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>
+          ${R.valor ? `<div class="lote-cost-row" style="padding:2px 2px 8px"><span>Venta de la cosecha − fletes</span><b style="font-feature-settings:'tnum'">${fmtMoney(R.valor)} − ${fmtMoney(totFlete)} = ${fmtMoney(R.valor - totFlete)}</b></div>` : ''}` : ''}`;
+        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title"><b>${esc(c.calidad ? c.calidad[0].toUpperCase() + c.calidad.slice(1) : 'Sin categoría')}</b> · ${textoCosecha(c)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${(f => f ? `<span><i class="ti ti-truck"></i> flete ${fmtMoney(f.valor_total)}</span>` : '')(fleteDeCosecha(c.id))}${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
           { resumen: `${totalKg.toLocaleString('es-CO')} kg${R.resumen ? ' · ' + R.resumen : ''}${R.valor ? ' · ' + fmtMoney(R.valor) : ''}`, acciones: btnCos });
       })()}
       ${(() => {
@@ -5034,6 +5078,7 @@ window.flowEditGasto = async function(id, concepto, valor, categoria){
     { value:'Equipos y Herramientas', label:'Equipos y Herramientas' },
     { value:'EPP', label:'Protección (EPP)' },
     { value:'jornales', label:'Mano de obra / Jornales' },
+    { value:'Transporte', label:'Transporte / fletes' },
     { value:'servicios', label:'Servicios' },
     { value:'otro', label:'Otro' }
   ];
@@ -5113,6 +5158,7 @@ async function flowAddGasto(){
         { value:'Equipos y Herramientas', label:'Equipos y Herramientas' },
         { value:'EPP', label:'Protección (EPP)' },
         { value:'jornales', label:'Mano de obra / Jornales' },
+        { value:'Transporte', label:'Transporte / fletes' },
         { value:'servicios', label:'Servicios' },
         { value:'otro', label:'Otro' }
       ]},
@@ -5325,11 +5371,12 @@ window.flowEditCosecha = async function(id){
   if (!k){ toast('Escribe cuántas se sacaron'); return; }
   if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
   const calidad = await _categoriaDeForm(r, l);
-  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:k.kilos, unidad:k.unidad, unidades:k.unidades, peso_unidad:k.peso_unidad, precio_unidad:k.precio_unidad, calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null });
+  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:k.kilos, unidad:k.unidad, unidades:k.unidades, peso_unidad:k.peso_unidad, precio_unidad:k.precio_unidad, calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null },
+    _fleteDeForm(r, k.unidades, k.unidad, l, calidad));
   toast(resp.success ? '✅ Cosecha actualizada' : resp.msg); if (resp.success) render();
 };
 window.flowDeleteCosecha = async function(id){
-  const ok = await M.confirm({ title:'Borrar cosecha', body:'¿Eliminar este registro de cosecha?', okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
+  const ok = await M.confirm({ title:'Borrar cosecha', body: fleteDeCosecha(id) ? '¿Eliminar este registro de cosecha? También se borra el flete que se anotó con ella.' : '¿Eliminar este registro de cosecha?', okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
   if (!ok) return;
   const r = await HANDLERS.delete_cosecha(id);
   toast(r.success ? '🗑️ Cosecha borrada' : r.msg); if (r.success) render();
@@ -5370,10 +5417,77 @@ function _camposCosecha(l, c = {}){
     { name:'calidad', label:'Calidad / categoría', type:'select', options: _opcionesCategoria(l, c.calidad), initial: c.calidad ? _catCanon(l, c.calidad) : categoriasLote(l)[0] },
     { name:'nueva_categoria', label:'¿Categoría nueva? Escríbela aquí (si no, déjalo vacío)', type:'text', placeholder:'Ej: Extra, Tercera, Riche' },
     { name:'precio_unidad', label:`Precio de venta por ${unidad === 'kg' ? 'kilo' : unidad} (opcional)`, type:'money', initial: c.precio_unidad ? String(c.precio_unidad) : '', placeholder: _pistaPrecios(l) || 'Ej: 80000' },
+    ..._camposFlete(c.id ? fleteDeCosecha(c.id) : null, 'cosecha'),
     { name:'observaciones', label:'Observaciones (opcional)', type:'text', initial: c.observaciones || '' },
     { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: c.fecha_recoleccion ? toDateInput(c.fecha_recoleccion) : hoyISO() }
   ];
 }
+/* ── FLETES: lo que se paga por bajar la carga (por canastilla/bulto o por toda la carga) ── */
+function fletesLote(loteId){ return comprasFinca().filter(c => c.lote_id === loteId && c.categoria === 'Transporte'); }
+function fleteDeCosecha(id){ return (S.cache.compras || []).find(c => c.cosecha_id === id) || null; }
+function _fleteEsCarga(f){ return !f.unidad || f.unidad === 'carga' || !(parseFloat(f.cantidad) > 0); }
+/* "20 canastillas × $7.000 = $140.000" o "carga completa $300.000" */
+function textoFlete(f){
+  const n = parseFloat(f.cantidad) || 0, v = parseFloat(f.valor_total) || 0;
+  return _fleteEsCarga(f) ? `carga completa ${fmtMoney(v)}` : `${_plural(n, _empaqueNorm(f.unidad))} × ${fmtMoney(v / n)} = ${fmtMoney(v)}`;
+}
+function _camposFlete(f, donde){
+  const carga = f && _fleteEsCarga(f);
+  return [
+    { name:'flete_modo', label:'Flete / transporte de la carga', type:'select', initial: !f ? '' : (carga ? 'carga' : 'unidad'), options:[
+      ...(donde === 'cosecha' ? [{ value:'', label:'Sin flete (o lo anoto aparte)' }] : []),
+      { value:'unidad', label:'Por cada canastilla, bulto… que se llevó' },
+      { value:'carga', label:'Flete completo por toda la carga' } ] },
+    { name:'flete_valor', label:'Valor del flete (por cada una, o el total si es carga completa)', type:'money', initial: !f ? '' : String(carga ? f.valor_total : Math.round(f.valor_total / parseFloat(f.cantidad))), placeholder:'Ej: 7000 por canastilla o 300000 la carga' },
+    { name:'flete_quien', label:'¿Quién llevó la carga? (opcional)', type:'text', initial: f?.proveedor || '', placeholder:'Ej: Don Jairo, camión de Pedro' }
+  ];
+}
+/* Del formulario al flete. cantidad/unidad: lo que se llevó. null = sin flete */
+function _fleteDeForm(r, cantidad, unidad, l, extra = ''){
+  const modo = r.flete_modo, v = numPlata(r.flete_valor);
+  if (!modo || !(v > 0)) return null;
+  unidad = _empaqueNorm(unidad);
+  const porUnidad = modo === 'unidad' && cantidad > 0;
+  const f = porUnidad ? { cantidad, unidad, valor_total: Math.round(cantidad * v) } : { cantidad:1, unidad:'carga', valor_total: Math.round(v) };
+  f.concepto = `Flete cosecha${l ? ' ' + l.codigo : ''}${extra ? ' (' + extra + ')' : ''}: ${porUnidad ? _plural(cantidad, unidad) + ' × ' + fmtMoney(v) : 'carga completa'}`;
+  f.proveedor = String(r.flete_quien || '').trim() || null;
+  f.lote_id = l?.id || null;
+  f.fecha = r.fecha || null;
+  return f;
+}
+/* Flete aparte: cuando una sola carga lleva varias calidades o se pagó después */
+window.flowNuevoFlete = async function(loteId, id){
+  const l = S.cache.lotes.find(x => x.id == loteId);
+  const prev = id ? (S.cache.compras || []).find(c => c.id == id) : null;
+  const ultima = (S.cache.cosechas || []).filter(c => c.lote_id == loteId).sort((a,b) => tsOrden(b.fecha_recoleccion) - tsOrden(a.fecha_recoleccion))[0];
+  const fecha = prev ? toDateInput(prev.fecha_compra) : (ultima ? toDateInput(ultima.fecha_recoleccion) : hoyISO());
+  // Lo que se sacó ese día, para no tener que contarlo de nuevo
+  const delDia = (S.cache.cosechas || []).filter(c => c.lote_id == loteId && toDateInput(c.fecha_recoleccion) === fecha && _empaqueNorm(c.unidad) !== 'kg');
+  const unidad = prev && !_fleteEsCarga(prev) ? _empaqueNorm(prev.unidad) : (delDia[0] ? _empaqueNorm(delDia[0].unidad) : perfilCultivo(l).empaque);
+  const cant = prev && !_fleteEsCarga(prev) ? parseFloat(prev.cantidad) : delDia.filter(c => _empaqueNorm(c.unidad) === unidad).reduce((a,c) => a + (parseFloat(c.unidades) || 0), 0);
+  const r = await M.form({ title:`${prev ? 'Editar flete' : 'Flete de la carga'}${l ? ' · ' + l.codigo : ''}`, sub:'Lo que se pagó por llevar la cosecha. Queda como gasto de Transporte del lote.', okText:'Guardar', fields:[
+    ..._camposFlete(prev, 'aparte'),
+    { name:'cantidad', label:'¿Cuántas se llevaron? (solo si se paga por cada una)', type:'number', initial: cant ? String(cant) : '', placeholder:'Ej: 40' },
+    { name:'unidad', label:'¿En qué?', type:'select', options: EMPAQUES.filter(e => e !== 'kg').map(e => ({ value:e, label:e[0].toUpperCase() + e.slice(1) })), initial: unidad === 'kg' ? 'canastilla' : unidad },
+    { name:'fecha', label:'Fecha', type:'date', initial: fecha }
+  ]});
+  if (!r) return;
+  if (!(numPlata(r.flete_valor) > 0)){ toast('Escribe el valor del flete'); return; }
+  const n = parseFloat(r.cantidad) || 0;
+  if (r.flete_modo === 'unidad' && !(n > 0)){ toast('Escribe cuántas se llevaron'); return; }
+  const f = _fleteDeForm(r, n, r.unidad, l);
+  if (prev?.cosecha_id) f.cosecha_id = prev.cosecha_id;
+  const resp = await HANDLERS.guardar_flete({ ...f, id: prev?.id });
+  if (resp.success) await refreshAll();
+  toast(resp.success ? `🚚 Flete: ${textoFlete(f)}` : resp.msg); if (resp.success) render();
+};
+window.flowBorrarFlete = async function(id){
+  const ok = await M.confirm({ title:'Borrar flete', body:'¿Eliminar este flete? También se quita del costo del lote.', okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
+  if (!ok) return;
+  const r = await HANDLERS.guardar_flete({ id, valor_total:0 });
+  if (r.success) await refreshAll();
+  toast(r.success ? '🗑️ Flete borrado' : r.msg); if (r.success) render();
+};
 /* Opciones de categoría: las del lote más la que ya tenga el registro */
 function _catCanon(l, cat){ const c = categoriasLote(l).find(x => _normTxt(x) === _normTxt(cat)); return c || String(cat || '').trim(); }
 function _opcionesCategoria(l, actual){
@@ -5415,8 +5529,9 @@ window.flowNuevaCosecha = async function(loteId, codigo){
   if (!k){ toast('Escribe cuántas se sacaron'); return; }
   if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
   const calidad = await _categoriaDeForm(r, l);
-  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, ...k, calidad, observaciones:r.observaciones||null, fecha: r.fecha || null });
-  toast(resp.success ? `🌾 Cosecha ${calidad || ''}: ${k.unidad === 'kg' ? '' : _plural(k.unidades, k.unidad) + ' = '}${k.kilos.toLocaleString('es-CO')} kg` : resp.msg); if (resp.success) render();
+  const flete = _fleteDeForm(r, k.unidades, k.unidad, l, calidad);
+  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, ...k, calidad, observaciones:r.observaciones||null, fecha: r.fecha || null, flete });
+  toast(resp.success ? `🌾 Cosecha ${calidad || ''}: ${k.unidad === 'kg' ? '' : _plural(k.unidades, k.unidad) + ' = '}${k.kilos.toLocaleString('es-CO')} kg${flete ? ' · 🚚 flete ' + fmtMoney(flete.valor_total) : ''}${/⚠️/.test(resp.msg) ? resp.msg.slice(resp.msg.indexOf(' · ⚠️')) : ''}` : resp.msg); if (resp.success) render();
 };
 /* Ver, renombrar, agregar o quitar las categorías de calidad del lote */
 window.flowCategoriasLote = async function(id){
