@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.0</title>
+<title>Finca El Retiro v12.1</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -631,14 +631,17 @@ function franjaChip(i){
 /* Valor en bodega de un insumo (stock actual × costo unitario) */
 function valorInv(i){ return (parseFloat(i.cantidad_actual)||0) * (parseFloat(i.costo_unitario)||0); }
 /* Costo total comprado de un insumo (lo que se ha gastado comprándolo) */
+/* Lo del préstamo del invernadero va aparte: no entra en los gastos de la finca ni en el costo de los lotes */
+function comprasFinca(){ return (S.cache.compras || []).filter(c => !c.proyecto_id); }
+function jornalesFinca(){ return (S.cache.jornales || []).filter(j => !j.proyecto_id); }
 function egresosTotales(){
-  const compras = (S.cache.compras||[]).filter(c=>c.origen!=='consumo').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
-  const jorn = (S.cache.jornales||[]).reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
+  const compras = comprasFinca().filter(c=>c.origen!=='consumo').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
+  const jorn = jornalesFinca().reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
   return compras + jorn;
 }
 function costoLote(loteId){
-  const compras = (S.cache.compras||[]).filter(c=>c.lote_id===loteId).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
-  const jorn = (S.cache.jornales||[]).filter(j=>j.lote_id===loteId).reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
+  const compras = comprasFinca().filter(c=>c.lote_id===loteId).reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
+  const jorn = jornalesFinca().filter(j=>j.lote_id===loteId).reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
   return compras + jorn;
 }
 function compradoInv(i){
@@ -2185,26 +2188,26 @@ const FUENTES_INF = {
     linea: f => `• ${f.producto}: ${f.cant}${f.valor > 0 ? ' · ' + fmtMoney(f.valor) : ''}${f.cantidad <= 0 ? ' · AGOTADO' : ''}` },
   compras: { titulo:'Compras', unidad:'$', fechas:true,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['categoria','Categoría'],['lote','Lote'],['valor','Valor']],
-    filas:() => (S.cache.compras||[]).filter(c => c.origen !== 'consumo').map(c => { const it = _itemDeConcepto(c.concepto);
+    filas:() => comprasFinca().filter(c => c.origen !== 'consumo').map(c => { const it = _itemDeConcepto(c.concepto);
       return _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor, it?.subcategoria], c.lote_id,
         { fecha:_fechaCorta(c.fecha_compra), concepto:c.concepto || '', categoria:c.categoria || 'otro', cat:it?.categoria || c.categoria, sub:subcatActual(it?.subcategoria), lote:_codLote(c.lote_id), valor:_num(c.valor_total) }); }),
     linea: f => `• ${f.fecha} · ${f.concepto}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
   salidas: { titulo:'Insumos usados (salidas de bodega)', unidad:'$', fechas:true,
     cols:[['fecha','Fecha'],['concepto','Detalle'],['lote','Lote'],['valor','Costo']],
-    filas:() => (S.cache.compras||[]).filter(c => c.origen === 'consumo').map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria], c.lote_id,
+    filas:() => comprasFinca().filter(c => c.origen === 'consumo').map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria], c.lote_id,
       { fecha:_fechaCorta(c.fecha_compra), concepto:(c.concepto||'').replace(/^Consumo:\s*/, ''), categoria:c.categoria || 'otro', lote:_codLote(c.lote_id) || 'Finca', valor:_num(c.valor_total) })),
     linea: f => `• ${f.fecha} · ${f.lote} · ${f.concepto} · ${fmtMoney(f.valor)}` },
   gastos: { titulo:'Gastos (compras y jornales)', unidad:'$', fechas:true,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['categoria','Categoría'],['lote','Lote'],['valor','Valor']],
     filas:(q) => [
-      ...(S.cache.compras||[]).filter(c => c.origen !== 'consumo' || q?.lote).map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor], c.lote_id,
+      ...comprasFinca().filter(c => c.origen !== 'consumo' || q?.lote).map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor], c.lote_id,
         { fecha:_fechaCorta(c.fecha_compra), concepto:c.concepto || '', categoria:c.origen === 'consumo' ? 'insumo usado' : (c.categoria || 'otro'), cat:c.categoria, lote:_codLote(c.lote_id), valor:_num(c.valor_total) })),
-      ...(S.cache.jornales||[]).map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
+      ...jornalesFinca().map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
         { fecha:_fechaCorta(j.fecha), concepto:`Jornal ${j.trabajador}: ${j.dias} día(s)${j.nota ? ' · ' + j.nota : ''}`, categoria:'jornales', cat:'jornales', lote:_codLote(j.lote_id), valor:_num(j.valor_total), persona:j.trabajador })) ],
     linea: f => `• ${f.fecha} · ${f.concepto}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
   jornales: { titulo:'Jornales', unidad:'$', fechas:true,
     cols:[['fecha','Fecha'],['trabajador','Trabajador'],['dias','Días'],['labor','Labor'],['lote','Lote'],['valor','Total']],
-    filas:() => (S.cache.jornales||[]).map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
+    filas:() => jornalesFinca().map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
       { fecha:_fechaCorta(j.fecha), trabajador:j.trabajador || '', persona:j.trabajador || '', dias:_num(j.dias), labor:j.nota || '', lote:_codLote(j.lote_id), valor:_num(j.valor_total) })),
     linea: f => `• ${f.fecha} · ${f.trabajador} · ${f.dias} día(s)${f.labor ? ' · ' + f.labor : ''}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
   cosechas: { titulo:'Cosechas', unidad:'kg', fechas:true,
@@ -3908,9 +3911,9 @@ function renderCultivos(){
       <div class="lote-detail-header"><div class="lote-detail-title">${esc(l.codigo)} · ${esc(l.cultivo)}</div><div class="lote-detail-sub">${l.variedad ? esc(l.variedad) + ' · ' : ''}Estado: ${esc(l.estado)}${l.ambiente?' · '+esc(l.ambiente):''}</div></div>
       ${cicloHtml}
       ${(() => {
-        const comprasL = (S.cache.compras||[]).filter(c => c.lote_id === l.id);
+        const comprasL = comprasFinca().filter(c => c.lote_id === l.id);
         const consumos = comprasL.filter(c => c.origen === 'consumo');
-        const jornL = (S.cache.jornales||[]).filter(j => j.lote_id === l.id);
+        const jornL = jornalesFinca().filter(j => j.lote_id === l.id);
         const totInsumos = consumos.reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const totJorn = jornL.reduce((a,j)=>a+(parseFloat(j.valor_total)||0),0);
         const otros = comprasL.filter(c=>c.origen!=='consumo').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
@@ -4035,8 +4038,8 @@ function renderCultivos(){
 
 window.flowHistorialLote = function(loteId){
   const l = S.cache.lotes.find(x => x.id == loteId); if (!l) return;
-  const comprasRaw = (S.cache.compras||[]).filter(c => c.lote_id === loteId);
-  const jornalesRaw = (S.cache.jornales||[]).filter(j => j.lote_id === loteId)
+  const comprasRaw = comprasFinca().filter(c => c.lote_id === loteId);
+  const jornalesRaw = jornalesFinca().filter(j => j.lote_id === loteId)
     .map(j => ({ id:j.id, concepto:`Jornal: ${j.trabajador} (${j.dias} día${parseFloat(j.dias)>1?'s':''})`, valor_total:j.valor_total, fecha_compra:j.fecha, categoria:'jornales', _jornal:true }));
   const comprasL = [...comprasRaw, ...jornalesRaw].sort((a,b)=> tsOrden(b.fecha_compra) - tsOrden(a.fecha_compra));
   const consumos = comprasRaw.filter(c => c.origen === 'consumo');
@@ -4074,8 +4077,8 @@ window.flowHistorialLote = function(loteId){
 /* ═══════════════════════════════════════════════════════════════
    PRÉSTAMO DEL INVERNADERO (proyectos de inversión)
    Gastos y jornales marcados con el préstamo, soportes (fotos y PDF
-   de facturas) y el informe para el banco. Estos gastos siguen
-   contando en los gastos generales y en el costo del lote.
+   de facturas) y el informe para el banco. Van APARTE: no entran en
+   los gastos de la finca ni en el costo de los lotes.
    ═══════════════════════════════════════════════════════════════ */
 const RUBROS = ['Estructura','Plástico y cubiertas','Riego','Materiales','Mano de obra','Transporte','Semilla y plántulas','Herramientas','Otros'];
 function rubroDeTexto(t){
@@ -4202,7 +4205,7 @@ async function guardarFila(tabla, id, cambios){
 const _rubroOpts = () => RUBROS.map(x => ({ value:x, label:x }));
 window.nuevoGastoPrestamo = async function(proyectoId){
   const p = (S.cache.proyectos || []).find(x => x.id === proyectoId);
-  const r = await M.form({ title:'Gasto del préstamo', sub:'También cuenta en los gastos generales y en el costo del lote del invernadero.', okText:'Guardar', fields:[
+  const r = await M.form({ title:'Gasto del préstamo', sub:'Queda aparte: se lleva solo en el préstamo, no se suma a los gastos de la finca.', okText:'Guardar', fields:[
     { name:'concepto', label:'¿Qué se compró o pagó?', type:'text', required:true, placeholder:'Ej: 40 guaduas inmunizadas' },
     { name:'proveedor', label:'Proveedor (opcional)', type:'text', placeholder:'Ej: Ferretería El Cafetal' },
     { name:'valor', label:'Valor total', type:'money', required:true },
@@ -4242,7 +4245,7 @@ window.editarGastoPrestamo = async function(id){
   toast(r2.success ? '✅ Gasto actualizado' : r2.msg); if (r2.success) render();
 };
 window.quitarDelPrestamo = async function(tipo, id){
-  const ok = await M.confirm({ title:'Quitar del préstamo', body:'El gasto sigue guardado en Dinero; solo deja de contar en el préstamo. ¿Continuar?', okText:'Sí, quitar', cancelText:'Cancelar' });
+  const ok = await M.confirm({ title:'Quitar del préstamo', body:'El gasto no se borra: pasa a los gastos normales de la finca. ¿Continuar?', okText:'Sí, quitar', cancelText:'Cancelar' });
   if (!ok) return;
   const r = await guardarFila(tipo === 'jornal' ? 'jornales' : 'compras', id, { proyecto_id: null });
   toast(r.success ? 'Quitado del préstamo' : r.msg); if (r.success) render();
@@ -4255,7 +4258,7 @@ window.asignarAlPrestamo = async function(proyectoId){
     ...(S.cache.jornales || []).filter(j => j.proyecto_id !== proyectoId).map(j => ({ tipo:'jornal', id:j.id, fecha:j.fecha, txt:`Jornal ${j.trabajador}${j.nota ? ' · ' + j.nota : ''}`, valor:_num(j.valor_total), lote:j.lote_id })),
   ].sort((a,b) => ((b.lote === p.lote_id) - (a.lote === p.lote_id)) || (tsOrden(b.fecha) - tsOrden(a.fecha)));
   const filas = cand.map((m, i) => `<label class="asig-fila" data-txt="${escA(_normTxt(m.txt))}"><input type="checkbox" data-i="${i}"><span style="flex:1;min-width:0"><b>${esc(m.txt)}</b><br><span class="text-tiny">${fmtFecha(m.fecha)}${m.lote === p.lote_id ? ' · <b style="color:var(--g)">lote del invernadero</b>' : ''}</span></span><span style="font-weight:700;font-feature-settings:'tnum'">${fmtMoney(m.valor)}</span></label>`).join('');
-  const html = `<div class="modal-h"><i class="ti ti-link"></i> Traer gastos al préstamo</div><div class="modal-sub">Marca los gastos o jornales que se pagaron con el préstamo. Arriba están los del lote del invernadero.</div>
+  const html = `<div class="modal-h"><i class="ti ti-link"></i> Traer gastos al préstamo</div><div class="modal-sub">Marca los gastos o jornales que se pagaron con el préstamo. Saldrán de los gastos de la finca y quedarán solo en el préstamo. Arriba están los del lote del invernadero.</div>
     <input class="modal-input" id="asig-q" placeholder="Buscar…" autocomplete="off" style="margin-bottom:8px">
     <div class="asig-lista">${filas || '<div class="text-tiny" style="padding:12px">No hay gastos para traer.</div>'}</div>
     <div class="modal-actions"><button class="btn btn-ghost" onclick="M._close(null)">Cancelar</button><button class="btn btn-primary" id="asig-ok"><i class="ti ti-check"></i> Traer marcados</button></div>`;
@@ -4390,8 +4393,8 @@ function renderDinero(){
   </div>`, { resumen: `${lotesConCosto.length} lotes` }) : '';
 
   const ultimos = [
-    ...S.cache.compras.map(c => ({tipo:'gasto', id:c.id, concepto:c.concepto, valor:c.valor_total, fecha:c.fecha_compra, categoria:c.categoria, origen:c.origen, lote_id:c.lote_id})),
-    ...S.cache.jornales.map(j => ({tipo:'jornal', id:j.id, concepto:`Jornal: ${j.trabajador} (${j.dias} día${parseFloat(j.dias)>1?'s':''})`, valor:j.valor_total, fecha:j.fecha, categoria:'jornales', lote_id:j.lote_id})),
+    ...comprasFinca().map(c => ({tipo:'gasto', id:c.id, concepto:c.concepto, valor:c.valor_total, fecha:c.fecha_compra, categoria:c.categoria, origen:c.origen, lote_id:c.lote_id})),
+    ...jornalesFinca().map(j => ({tipo:'jornal', id:j.id, concepto:`Jornal: ${j.trabajador} (${j.dias} día${parseFloat(j.dias)>1?'s':''})`, valor:j.valor_total, fecha:j.fecha, categoria:'jornales', lote_id:j.lote_id})),
     ...S.cache.ingresos.map(i => ({tipo:'ingreso', id:i.id, concepto:i.concepto, valor:i.valor_total, fecha:i.fecha}))
   ].sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha)).slice(0, 25);
 
