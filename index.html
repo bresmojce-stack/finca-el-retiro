@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v11.2</title>
+<title>Finca El Retiro v11.3</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -1195,7 +1195,7 @@ const HANDLERS = {
   registrar_cosecha: async (i) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar cosechas'};
     const payload = { lote_id:i.lote_id||null, volumen_kg:i.kilos, calidad:i.calidad||'normal', observaciones:i.observaciones||null, fecha_recoleccion:i.fecha||fechaLocalISO(), registrado_por_id:S.user?.dbId||null,
-      unidad: i.unidad || null, unidades: i.unidades != null ? i.unidades : null, peso_unidad: i.peso_unidad != null ? i.peso_unidad : null };
+      unidad: i.unidad || null, unidades: i.unidades != null ? i.unidades : null, peso_unidad: i.peso_unidad != null ? i.peso_unidad : null, precio_unidad: i.precio_unidad || null };
     const { error } = await sb.from('cosechas').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
@@ -1243,6 +1243,27 @@ const HANDLERS = {
   cerrar_plaga: async (id) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión'};
     const { error } = await sb.from('plagas').update({ activa:false }).eq('id', id);
+    if (error) return {success:false, msg:'Error BD: ' + error.message};
+    await refreshAll();
+    return {success:true};
+  },
+  edit_plaga: async (id, changes) => {
+    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
+    const { error } = await sb.from('plagas').update(changes).eq('id', id);
+    if (error) return {success:false, msg:'Error BD: ' + error.message};
+    await refreshAll();
+    return {success:true};
+  },
+  edit_memoria: async (id, contenido) => {
+    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
+    const { error } = await sb.from('memoria_agente').update({ contenido }).eq('id', id);
+    if (error) return {success:false, msg:'Error BD: ' + error.message};
+    await refreshAll();
+    return {success:true};
+  },
+  delete_memoria: async (id) => {
+    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
+    const { error } = await sb.from('memoria_agente').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
     return {success:true};
@@ -1822,11 +1843,51 @@ function _canon(t){
   }).join(' ');
 }
 
+/* ── CALCULADORA: "cuánto es 36 por 22", "suma 200 mil y 50 mil", "1500 entre 3", "el 10% de 800 mil" ── */
+function calculoLocal(t){
+  const pide = /^(cuanto es|cuanto da|cuanto son|cuanto seria|cuanto sale|calcula|calcular|calculame|haz la cuenta( de)?|suma|sumar|resta|restar|multiplica|multiplicar|divide|dividir)\b/.test(t);
+  const soloCuenta = (/^[\d\s.,+\-*/x()%$]+$/.test(t) && /\d\s*[+\-*/x]\s*\d/.test(t)) || /^(el |la )?\d+(?:[.,]\d+)?\s*%\s*(de|del)\b/.test(t);
+  if (!pide && !soloCuenta) return null;
+  let e = t.replace(/^(cuanto (es|da|son|seria|sale)|calcula(r|me)?|haz la cuenta( de)?)\s*/, '');
+  const plata = /\$|\bmil\b|millon|pesos|lucas/.test(e);
+  e = e.replace(/\b(el|la|los|las|de pesos|pesos|lucas)\b/g, ' ');
+  for (let k = 0; k < 4; k++) e = e.replace(/(\d)\.(\d{3})(?!\d)/g, '$1$2');
+  e = e.replace(/(\d+(?:[.,]\d+)*)\s*(millones|millon)/g, (m, n) => String(_numero(n) * 1e6)).replace(/(\d+(?:[.,]\d+)*)\s*mil\b/g, (m, n) => String(_numero(n) * 1000));
+  e = e.replace(/(\d+(?:[.,]\d+)?)\s*%\s*(?:de|del)\s*(\d+(?:\.\d+)?)/g, '($1/100*$2)');
+  const verbo = (e.match(/^(suma|sumar|resta|restar|multiplica|multiplicar|divide|dividir)\b/) || [])[1] || '';
+  e = e.replace(/^(suma|sumar|resta|restar|multiplica|multiplicar|divide|dividir)\s*/, '');
+  const opVerbo = /^sum/.test(verbo) ? '+' : /^rest/.test(verbo) ? '-' : /^mult/.test(verbo) ? '*' : /^divid/.test(verbo) ? '/' : null;
+  if (opVerbo === '-'){ const m = e.match(/^(.+?)\s+de\s+(.+)$/); if (m) e = `${m[2]} - ${m[1]}`; }   // "resta 500 de 2000" = 2000 − 500
+  if (opVerbo) e = e.replace(/\s+(y|con|entre|por|de|a)\s+/g, ` ${opVerbo} `);
+  e = e.replace(/\bmas\b/g, '+').replace(/\bmenos\b/g, '-').replace(/\b(por|veces|x)\b/g, '*').replace(/\bdividido\s*(entre|en|por)?\b|\bentre\b|\bsobre\b/g, '/');
+  e = e.replace(/(\d),(\d+)/g, '$1.$2').replace(/\$/g, '').replace(/\s+/g, '');
+  if (!/^[\d+\-*/().]+$/.test(e) || !/\d[+\-*/]/.test(e)) return null;
+  // Evaluador sencillo (sin eval): suma/resta, luego multiplicación/división, paréntesis
+  let i = 0;
+  const num = () => { if (e[i] === '('){ i++; const v = sum(); i++; return v; } if (e[i] === '-'){ i++; return -num(); } const m = e.slice(i).match(/^\d+(\.\d+)?/); if (!m) throw 0; i += m[0].length; return parseFloat(m[0]); };
+  const mul = () => { let v = num(); while (e[i] === '*' || e[i] === '/'){ const o = e[i++]; const w = num(); v = o === '*' ? v * w : v / w; } return v; };
+  const sum = () => { let v = mul(); while (e[i] === '+' || e[i] === '-'){ const o = e[i++]; const w = mul(); v = o === '+' ? v + w : v - w; } return v; };
+  let v; try{ v = sum(); if (i < e.length || !isFinite(v)) return null; }catch(err){ return null; }
+  const r = Math.round(v * 100) / 100;
+  const bonito = e.replace(/\d+(\.\d+)?/g, n => (+n).toLocaleString('es-CO'));
+  return `🧮 ${bonito.replace(/\*/g, ' × ').replace(/\//g, ' ÷ ').replace(/\+/g, ' + ').replace(/(\d)-/g, '$1 − ')} = ${plata ? fmtMoney(r) : r.toLocaleString('es-CO')}`;
+}
+
+/* ¿La plata dicha es por unidad o el total? "2 bultos a 80 mil" (por unidad) · "2 bultos por 160 mil" (total) */
+function _totalConUnidad(t, plata, cantidad){
+  if (!plata || !(cantidad > 1)) return plata ? plata.v : 0;
+  const antes = t.slice(Math.max(0, plata.i - 14), plata.i), despues = t.slice(plata.i + plata.n, plata.i + plata.n + 30);
+  if (/\b(por|en|total|todo|todos|todas)\s*(de\s*)?$/.test(antes)) return plata.v;
+  const unitario = /\ba\s*$/.test(antes) || /^\s*(cada|c\/u|c u|la unidad|el bulto|la canastilla|el kilo|la caja|por (canastilla|bulto|kilo|unidad|caja))/.test(despues);
+  return unitario ? Math.round(plata.v * cantidad) : plata.v;
+}
+const RX_CANT_VENTA = '(canastillas?|canastas?|bultos?|medios?(?:\\s+bultos?)?|cajas?|kilos?|kg|arrobas?|unidades?|docenas?|litros?|galones?)';
+
 /* ── REGISTROS POR SECCIÓN ── devuelve la misma propuesta que daría el agente de IA.
    _seguro=false cuando faltan datos clave: entonces se intenta con la IA (si hay cuota). */
 const RX_COMPRA = /\b(compr\w*|entr(o|aron)|lleg(o|aron)|trajeron|traje|repus\w*|reponer|ingres(o|aron)|recibi\w*)\b/;
 const RX_SALIDA = /\b(use|uso|usamos|usaron|sali(o|eron)|saque|saco|sacamos|sacaron|gaste|gasto|gastamos|gastaron|eche|echo|echamos|echaron|aplic\w*|consum\w*)\b/;
-const RX_LABOR  = /\b(fumig|asperj|aplic|pode|podo|podamos|podaron|regu|regamos|regaron|riego|abon|fertiliz|sembr|trasplant|desyerb|limpi|guada|desbro|deshoj|cosech|recog|tutor|amarr|plate|fumigu|cerc|arregl|repar|desmalez|rocer|rozamos|deschup|ralee|ralea)\w*/;
+const RX_LABOR  = /\b(roci|deshierb|encal|descogoll|trasplant|plantamos|sembramos|cortamos|limpiamos|desmalez|guadan|hoyamos|ahoy|aporc|tutore|entutor|colgamos|despunt|amarramos|podamos|fumig|asperj|aplic|pode|podo|podamos|podaron|regu|regamos|regaron|riego|abon|fertiliz|sembr|trasplant|desyerb|limpi|guada|desbro|deshoj|cosech|recog|tutor|amarr|plate|fumigu|cerc|arregl|repar|desmalez|rocer|rozamos|deschup|ralee|ralea)\w*/;
 const ESTADOS_LOTE = { planificacion:'planificación', siembra:'siembra', sembrado:'siembra', vegetativo:'vegetativo', crecimiento:'vegetativo', produccion:'producción', produciendo:'producción', cosecha:'cosecha', cosechando:'cosecha', descanso:'descanso', descansando:'descanso' };
 
 function interpretarLocal(dominio, texto){
@@ -1846,9 +1907,22 @@ function interpretarLocal(dominio, texto){
         const unidad = _empaqueNorm(emp[2]), unidades = _numero(emp[1]);
         const mp = t.slice(emp.index + emp[0].length).match(/^\s*(?:de|a|por)\s+(\d+(?:[.,]\d+)?)\s*(?:kilos?|kg)/);
         const peso = mp ? _numero(mp[1]) : pesoSugerido(lote, unidad);
-        const kilos = peso ? Math.round(unidades * peso * 100) / 100 : '';
-        return { accion:'cosecha', unidad, unidades, peso_unidad: peso || '', kilos, calidad:'primera', observaciones:'', lote_codigo: lote?.codigo || null, fecha,
-          resumen:`Cosecha: ${_plural(unidades, unidad)}${kilos ? ' = ' + kilos.toLocaleString('es-CO') + ' kg' : ''}${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
+        // Líneas por categoría: "20 canastillas de grueso a 80 mil y 15 de parejo a 60 mil"
+        const cats = lote ? categoriasLote(lote) : [...new Set(PERFIL_CULTIVO.flatMap(pp => pp.categorias || []))];
+        const catDe = seg => cats.find(c => { const k = _normTxt(c); return k.length >= 3 && new RegExp('\\b' + _rxEsc(k.slice(0, Math.max(3, k.length - 1)))).test(seg); });
+        const lineas = [];
+        t.split(/\s+y\s+|,|;/).forEach(seg => {
+          const mn = seg.match(new RegExp('\\b' + RX_NUM + '(?!\\s*(?:mil|millon|kilos?|kg))\\b'));
+          const cat = catDe(seg);
+          if (!mn || !cat) return;
+          const pl = _plata(seg.replace(/\b(de|a|por)\s+\d+(?:[.,]\d+)?\s*(kilos?|kg)\b/, ''));
+          lineas.push({ categoria: cat, unidades: _numero(mn[1]), precio: pl?.v || ultimoPrecio(lote, cat, unidad) || '' });
+        });
+        if (!lineas.length) lineas.push({ categoria: catDe(t) || cats[0] || '', unidades, precio: '' });
+        const totalU = lineas.reduce((a, x) => a + (x.unidades || 0), 0);
+        const kilos = peso ? Math.round(totalU * peso * 100) / 100 : '';
+        return { accion:'cosecha', unidad, unidades: totalU, peso_unidad: peso || '', kilos, lineas, observaciones:'', lote_codigo: lote?.codigo || null, fecha,
+          resumen:`Cosecha: ${lineas.map(x => _plural(x.unidades, unidad) + (x.categoria ? ' ' + x.categoria : '')).join(' + ')}${kilos ? ' = ' + kilos.toLocaleString('es-CO') + ' kg' : ''}${lote ? ' en ' + lote.codigo : ''}`, _seguro: !!lote };
       }
       const kg = /cosech|recog|sacamos|sacaron/.test(t) && t.match(new RegExp('\\b' + RX_NUM + '\\s*(kilos?|kgs?|kilogramos?|arrobas?|toneladas?)\\b'));
       if (kg){
@@ -1877,7 +1951,9 @@ function interpretarLocal(dominio, texto){
       const accion = entra && !sale ? 'entrada' : sale && !entra ? 'salida' : (plata ? 'entrada' : null);
       if (!accion) return null;
       const base = { producto: nombre, cantidad: c?.cantidad || '', unidad: c?.unidad || prod?.unidad_medida || '', fecha: fechaAgente(f?.fecha) || hoy, _seguro: !!(nombre && c) };
-      if (accion === 'entrada') return { accion, ...base, precio_total: plata?.v || '', lote_codigo: null, resumen: `Entrada a bodega${nombre ? ': ' + nombre : ''}` };
+      const precioTot = _totalConUnidad(resto, plata, c?.cantidad);
+      if (accion === 'entrada') return { accion, ...base, precio_total: precioTot || '', lote_codigo: null,
+        resumen: `Entrada a bodega${nombre ? ': ' + nombre : ''}${precioTot && plata && precioTot !== plata.v ? ` · ${c.cantidad} × ${fmtMoney(plata.v)} = ${fmtMoney(precioTot)}` : ''}` };
       return { accion, ...base, lote_codigo: lote?.codigo || null, resumen: `Salida de bodega${nombre ? ': ' + nombre : ''}${lote ? ' para ' + lote.codigo : ''}` };
     }
     case 'dinero': {
@@ -1893,9 +1969,12 @@ function interpretarLocal(dominio, texto){
       }
       const limpio = _frase(_quitar(texto, f, plata)
         .replace(/^\s*(hoy|ayer|antier)?\s*(gaste|gasté|pague|pagué|compre|compré|compramos|pagamos|se pago|se pagó|se compro|se compró|vendi|vendí|vendimos|se vendio|se vendió|me pagaron|nos pagaron|recibi|recibí|registra|anota)\s+(en|de|por|el|la|los|las|un|una|unos|unas)?\s*/i, ''));
+      const mc = t2.match(new RegExp('\\b' + RX_NUM + '\\s*' + RX_CANT_VENTA + '\\b'));
+      const cant = mc ? _numero(mc[1]) : 0, total = _totalConUnidad(t2, plata, cant) || valor;
+      const cuenta = (plata && total !== plata.v) ? ` · ${cant} × ${fmtMoney(plata.v)} = ${fmtMoney(total)}` : '';
       if (/\bvend\w*|\bventa\b|\bingres\w*|me pagaron|nos pagaron|\bcobr\w*|\brecibi\b/.test(t2))
-        return { accion:'ingreso', concepto: limpio || 'Venta', valor: valor || '', fecha, resumen: 'Ingreso / venta', _seguro: !!valor };
-      return { accion:'gasto', concepto: limpio, valor: valor || '', categoria: _categoria(t2), lote_codigo: lote?.codigo || null, fecha, resumen: 'Gasto', _seguro: !!(valor && limpio) };
+        return { accion:'ingreso', concepto: limpio || 'Venta', valor: total || '', fecha, resumen: 'Ingreso / venta' + cuenta, _seguro: !!total };
+      return { accion:'gasto', concepto: limpio, valor: total || '', categoria: _categoria(t2), lote_codigo: lote?.codigo || null, fecha, resumen: 'Gasto' + cuenta, _seguro: !!(total && limpio) };
     }
     case 'tareas': {
       if (/\b(ya )?(hice|hicimos|termin\w*|complet\w*|acab\w*|listo|lista|cumpl\w*)\b/.test(t) && !/\b(recuerd\w*|program\w*|agend\w*|hay que|tengo que|toca)\b/.test(t)){
@@ -2105,10 +2184,10 @@ const FUENTES_INF = {
       { fecha:_fechaCorta(j.fecha), trabajador:j.trabajador || '', persona:j.trabajador || '', dias:_num(j.dias), labor:j.nota || '', lote:_codLote(j.lote_id), valor:_num(j.valor_total) })),
     linea: f => `• ${f.fecha} · ${f.trabajador} · ${f.dias} día(s)${f.labor ? ' · ' + f.labor : ''}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
   cosechas: { titulo:'Cosechas', unidad:'kg', fechas:true,
-    cols:[['fecha','Fecha'],['lote','Lote'],['kgTxt','Kilos'],['calidad','Calidad'],['obs','Notas']],
+    cols:[['fecha','Fecha'],['lote','Lote'],['calidad','Calidad'],['kgTxt','Kilos'],['valor','Valor'],['obs','Notas']],
     filas:() => (S.cache.cosechas||[]).map(c => _fila2(c.fecha_recoleccion, [c.calidad, c.observaciones, 'cosecha'], c.lote_id,
-      { fecha:_fechaCorta(c.fecha_recoleccion), lote:c.lote?.codigo || _codLote(c.lote_id), kg:_num(c.volumen_kg), kgTxt: textoCosecha(c), calidad:c.calidad || 'normal', obs:c.observaciones || '' })),
-    linea: f => `• ${f.fecha} · ${f.lote} · ${f.kgTxt} (${f.calidad})${f.obs ? ' · ' + f.obs : ''}` },
+      { fecha:_fechaCorta(c.fecha_recoleccion), lote:c.lote?.codigo || _codLote(c.lote_id), kg:_num(c.volumen_kg), kgTxt: textoCosecha(c), calidad:c.calidad || 'Sin categoría', categoria:c.calidad || 'Sin categoría', valor: valorCosecha(c), obs:c.observaciones || '' })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.calidad} · ${f.kgTxt}${f.obs ? ' · ' + f.obs : ''}` },
   ingresos: { titulo:'Ingresos y ventas', unidad:'$', fechas:true, sinLote:true,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['valor','Valor']],
     filas:() => (S.cache.ingresos||[]).map(i => _fila2(i.fecha, [i.concepto], null, { fecha:_fechaCorta(i.fecha), concepto:i.concepto || '', valor:_num(i.valor_total) })),
@@ -2172,10 +2251,10 @@ function entenderInforme(texto){
   else if (!lista && /\bcuant[oa]\b|\btotal\b|\bsuma\b/.test(t)) op = 'total';
   if ((fuente === 'inventario' || fuente === 'lotes') && op !== 'lista') op = 'lista';
 
-  const g = t.match(/\bpor (lote|lotes|mes|meses|trabajador|trabajadores|persona|categoria|categorias|producto|productos|proveedor)\b/);
-  const g2 = !g && t.match(/\b(?:en )?(?:que|cual|cuales) (lote|lotes|mes|meses|trabajador|trabajadores|categoria|categorias|producto|productos)\b/);
+  const g = t.match(/\bpor (lote|lotes|mes|meses|trabajador|trabajadores|persona|categoria|categorias|calidad|calidades|producto|productos|proveedor)\b/);
+  const g2 = !g && t.match(/\b(?:en )?(?:que|cual|cuales) (lote|lotes|mes|meses|trabajador|trabajadores|categoria|categorias|calidad|calidades|producto|productos)\b/);
   const dim = g ? g[1] : g2 ? g2[1] : null;
-  let agrupar = dim ? ({ lotes:'lote', meses:'mes', trabajadores:'persona', trabajador:'persona', categorias:'categoria', productos:'producto' }[dim] || dim) : null;
+  let agrupar = dim ? ({ lotes:'lote', meses:'mes', trabajadores:'persona', trabajador:'persona', categorias:'categoria', calidad:'categoria', calidades:'categoria', productos:'producto' }[dim] || dim) : null;
   if (!agrupar && fuente === 'aplicaciones' && (op === 'total' || /\bmas (usad|aplicad|gastad)/.test(t))) agrupar = 'producto';
   if (!agrupar && fuente === 'gastos' && /\ben (que|donde) (se )?(gast\w*|va|fue|se va|se fue)|\bmas (se gasta|gastamos|plata)|\bmas caro/.test(t)) agrupar = 'categoria';
   if (!agrupar && fuente === 'compras' && /\bmas (comprad|caro)/.test(t)) agrupar = 'producto';
@@ -2247,7 +2326,7 @@ function generarInforme(q){
     q.desde || q.hasta ? (q.desde === q.hasta ? fmtFecha(q.desde) : `${q.desde ? fmtFecha(q.desde) : 'inicio'} → ${q.hasta ? fmtFecha(q.hasta) : 'hoy'}`) : '',
   ].filter(Boolean).join(' · ');
 
-  const totalPlata = src.unidad === '$' ? filas.reduce((a,f) => a + (f.valor||0), 0) : 0;
+  const totalPlata = (src.unidad === '$' || q.fuente === 'cosechas') ? filas.reduce((a,f) => a + (f.valor||0), 0) : 0;
   const totalKg = q.fuente === 'cosechas' || q.fuente === 'lotes' ? filas.reduce((a,f) => a + (f.kg||0), 0) : 0;
 
   // Agrupado: una fila por grupo con cantidad de registros y totales
@@ -2266,8 +2345,8 @@ function generarInforme(q){
     agrupado.sort((a,b) => (b.valor - a.valor) || (b.kg - a.kg) || (b.n - a.n) || String(a.grupo).localeCompare(String(b.grupo)));
     cols = [['grupo', { lote:'Lote', mes:'Mes', persona:'Persona', categoria:'Categoría', producto:'Producto', proveedor:'Proveedor' }[q.agrupar]], ['n','Registros']];
     if (q.fuente === 'aplicaciones') cols.push(['cantTxt','Cantidad total'], ['ultimaTxt','Última vez']);
-    if (src.unidad === '$') cols.push(['valor','Total']);
     if (totalKg) cols.push(['kg','Kilos']);
+    if (src.unidad === '$' || (q.fuente === 'cosechas' && totalPlata)) cols.push(['valor','Total']);
     filasVista = agrupado;
   }
 
@@ -2399,7 +2478,7 @@ const AYUDA = `Esto es lo que entiendo sin IA (no gasta cuota):
 
 ✍️ Registros (siempre te pido confirmar)
 • «ayer fumigamos el tomate con trionex 100cc, lannate 150cc para 100 lts»
-• «cosechamos 300 kilos en el lote 3»
+• «cosechamos 20 canastillas de grueso a 80 mil y 15 de parejo a 60 mil en el tronus»
 • «entraron 2 bultos de urea a 80 mil», «usé medio litro de mancozeb»
 • «pagué 2 jornales a Gerardo a 65 mil», «gasté 50 mil en transporte», «vendimos tomate por 1,5 millones»
 • «recuérdame fumigar el viernes», «ya terminé de fumigar el lote 2»
@@ -2408,7 +2487,9 @@ const AYUDA = `Esto es lo que entiendo sin IA (no gasta cuota):
 🛠️ Otros
 • «borra la última labor», «corrige el último gasto»
 • «para qué sirve lannate» (ficha del producto)
-• «abre bodega», «saldo», «qué hay para hoy», «clima»
+• «abre bodega», «saldo», «qué hay para hoy», «clima», «ver apuntes»
+• Cuentas: «cuánto es 36 por 22», «suma 200 mil y 50 mil», «el 10% de 800 mil»
+• Precios: «vendimos 30 canastillas a 80 mil» (calcula 30 × 80 mil)
 
 Para consejos (plagas, dosis recomendadas, mezclas) toca «Preguntar a la IA».`;
 
@@ -2466,13 +2547,10 @@ function apunteLocal(texto, t){
 }
 
 /* Borrar o corregir el último registro de un tipo: "borra la última labor", "corrige el último gasto" */
-function ultimoRegistroLocal(t){
-  const m = t.match(/\b(borra|borrar|borre|elimina|eliminar|quita|quitar|deshacer|deshaz|corrige|corregir|edita|editar|cambia|cambiar|modifica|modificar|arregla)\b.*\b(ultim[oa]|anterior)\b|^(deshacer|deshaz)\b/);
-  if (!m) return null;
-  const borrar = /\b(borr|elimin|quit|deshac|deshaz)/.test(t);
+/* El último registro anotado de un tipo, con cómo editarlo y borrarlo */
+function _ultimoDe(tipo){
   const cuando = (x, f) => tsOrden(x.creado_en || x.created_at || f(x));
   const ult = (lista, f) => (lista || []).slice().sort((a,b) => cuando(b, f) - cuando(a, f))[0];
-  let tipo = /jornal/.test(t) ? 'jornal' : /cosech/.test(t) ? 'cosecha' : /\b(venta|ingreso)/.test(t) ? 'ingreso' : /\b(gasto|compra)/.test(t) ? 'gasto' : /tarea/.test(t) ? 'tarea' : 'labor';
   const R = {
     labor:   () => { const x = ult(S.cache.activities, y => y.fecha); return x && { desc:`${_fechaCorta(x.fecha)} · ${x.actividad}`, del:['flowDeleteActivity', x.id], edit:['flowEditActivity', x.id, x.actividad] }; },
     gasto:   () => { const x = ult((S.cache.compras||[]).filter(c => c.origen !== 'consumo'), y => y.fecha_compra); return x && { desc:`${_fechaCorta(x.fecha_compra)} · ${x.concepto} · ${fmtMoney(x.valor_total)}`, del:['flowDeleteGasto', x.id, x.concepto], edit:['flowEditGasto', x.id, x.concepto, x.valor_total, x.categoria] }; },
@@ -2481,7 +2559,22 @@ function ultimoRegistroLocal(t){
     ingreso: () => { const x = ult(S.cache.ingresos, y => y.fecha); return x && { desc:`${_fechaCorta(x.fecha)} · ${x.concepto} · ${fmtMoney(x.valor_total)}`, del:['flowDeleteIngreso', x.id, x.concepto], edit:['flowEditIngreso', x.id, x.concepto, x.valor_total] }; },
     tarea:   () => { const x = ult(S.cache.tasks, y => y.creado_en); return x && { desc:x.titulo, del:['flowDeleteTask', x.id, x.titulo], edit:['flowEditTask', x.id] }; },
   };
-  const r = R[tipo]();
+  return R[tipo] ? R[tipo]() : null;
+}
+/* Botones «Corregir» y «Borrar» que salen en el chat después de guardar algo */
+window.corregirUltimo = function(tipo, modo){
+  if (tipo === 'apunte'){ flowApuntes(); return; }
+  const r = _ultimoDe(tipo); if (!r){ toast('No encontré ese registro'); return; }
+  const [fn, ...args] = modo === 'borrar' ? r.del : r.edit;
+  if (typeof window[fn] === 'function') window[fn](...args);
+};
+const TIPO_DE_ACCION = { registrar_labor:'labor', gasto:'gasto', ingreso:'ingreso', jornal:'jornal', cosecha:'cosecha', crear_tarea:'tarea', apunte:'apunte' };
+function ultimoRegistroLocal(t){
+  const m = t.match(/\b(borra|borrar|borre|elimina|eliminar|quita|quitar|deshacer|deshaz|corrige|corregir|edita|editar|cambia|cambiar|modifica|modificar|arregla)\b.*\b(ultim[oa]|anterior)\b|^(deshacer|deshaz)\b/);
+  if (!m) return null;
+  const borrar = /\b(borr|elimin|quit|deshac|deshaz)/.test(t);
+  let tipo = /jornal/.test(t) ? 'jornal' : /cosech/.test(t) ? 'cosecha' : /\b(venta|ingreso)/.test(t) ? 'ingreso' : /\b(gasto|compra)/.test(t) ? 'gasto' : /tarea/.test(t) ? 'tarea' : 'labor';
+  const r = _ultimoDe(tipo);
   if (!r) return { texto:`No encontré ningún registro de ese tipo (${tipo}).` };
   const [fn, ...args] = borrar ? r.del : r.edit;
   return { ejecutar: () => window[fn](...args), texto: `${borrar ? '🗑️ Último' : '✏️ Último'} registro de ${tipo}: ${r.desc}` };
@@ -2535,6 +2628,8 @@ function pensar(texto, dominio){
   const nav = t.match(/^(abre|abrir|abreme|ir a|ve a|vamos a|llevame a|muestrame la pestana de|pestana)\s+(la |el |los |las )?(\w+)/);
   if (nav && PESTANAS[nav[3]]) return { ir: PESTANAS[nav[3]], texto: `Listo, abrí ${nav[3]}.` };
 
+  if (/^(ver |mis |los |mostrar |muestrame (los )?)?apuntes\b|^(que|cuales) apuntes\b/.test(t)) return { ejecutar: () => flowApuntes(), texto: '🧠 Abrí tus apuntes: ahí puedes corregirlos o borrarlos.' };
+  const cuenta = calculoLocal(t.replace(/[¿?]/g, '').trim()); if (cuenta) return { texto: cuenta };
   const rapido = respuestaLocal(raw); if (rapido) return { texto: rapido };
   const ficha = fichaLocal(t); if (ficha) return ficha;
   const apunte = apunteLocal(raw, t); if (apunte) return apunte.propuesta ? { propuesta: apunte.propuesta, dominio:'apunte' } : apunte;
@@ -2659,7 +2754,8 @@ async function atenderChat(texto, media){
   if (r.propuesta){
     S.loading = false; render();
     const msg = await confirmarYGuardar(r.dominio, r.propuesta);
-    decir(msg || 'Listo, no guardé nada.');
+    const tipo = TIPO_DE_ACCION[r.propuesta.accion];
+    decir(msg || 'Listo, no guardé nada.', (msg && !/^⚠️/.test(msg) && tipo) ? { ultimo: tipo } : {});
     return;
   }
   decir(r.texto, r.boton ? { boton: r.boton } : {});
@@ -2694,9 +2790,16 @@ function camposDe(prop){
     case 'crear_tarea': return [{k:'titulo',label:'Tarea',type:'text',v:prop.titulo||''},{k:'fecha_limite',label:'Fecha límite',type:'date',v:prop.fecha_limite||''},{k:'asignado',label:'Asignado a',type:'select',v:prop.asignado||'todos',options:userOpts},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
     case 'completar_tarea': return [{k:'titulo',label:'Tarea a completar',type:'text',v:prop.titulo||''}];
     case 'apunte': return [{k:'contenido',label:'Apunte para recordar',type:'text',v:prop.contenido||''}];
-    case 'cosecha': return [{k:'unidad',label:'¿En qué se sacó?',type:'select',v:prop.unidad||'kg',options:EMPAQUES.map(e=>({value:e,label:e==='kg'?'Kilos sueltos':e}))},
-      {k:'unidades',label:'¿Cuántas? (o kilos si es «Kilos sueltos»)',type:'number',v:prop.unidades||prop.kilos||''},{k:'peso_unidad',label:'Peso de cada una (kg)',type:'number',v:prop.peso_unidad||''},{k:'calidad',label:'Calidad',type:'select',v:prop.calidad||'normal',options:[{value:'primera',label:'Primera'},{value:'normal',label:'Normal'},{value:'segunda',label:'Segunda'}]},
+    case 'cosecha': {
+      const lt = resolverLote(prop.lote_codigo), cats = categoriasLote(lt);
+      const lineas = (prop.lineas && prop.lineas.length) ? prop.lineas : [{ categoria: prop.calidad || cats[0], unidades: prop.unidades || prop.kilos || '', precio:'' }];
+      const catOpts = c => [...new Set([...cats, c].filter(Boolean))].map(x => ({ value:x, label:x }));
+      return [{k:'unidad',label:'¿En qué se sacó?',type:'select',v:prop.unidad||'kg',options:EMPAQUES.map(e=>({value:e,label:e==='kg'?'Kilos sueltos':e}))},
+      {k:'peso_unidad',label:'Peso de cada una (kg)',type:'number',v:prop.peso_unidad||''},
+      ...lineas.slice(0, 8).flatMap((x, n) => [{k:`_c${n}_cat`,label:`Calidad ${n+1}`,type:'select',v:x.categoria||'',options:catOpts(x.categoria)},
+        {k:`_c${n}_n`,label:'Cuántas (o kilos)',type:'number',v:x.unidades||''},{k:`_c${n}_p`,label:'Precio por unidad (opcional)',type:'number',v:x.precio||''}]),
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'observaciones',label:'Observaciones',type:'text',v:prop.observaciones||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
+    }
     case 'crear_lote': return [{k:'codigo',label:'Código',type:'text',v:prop.codigo||''},{k:'cultivo',label:'Cultivo',type:'text',v:prop.cultivo||''},{k:'variedad',label:'Variedad',type:'text',v:prop.variedad||''}];
     case 'estado_lote': return [{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'estado',label:'Estado',type:'select',v:prop.estado||'',options:['planificación','siembra','vegetativo','producción','cosecha','descanso'].map(e=>({value:e,label:e}))}];
     default: return [];
@@ -2771,15 +2874,24 @@ async function ejecutarAccion(v){
       const r=await consumirInsumo({itemId:it.id, cantidad:cant, loteId:lote?.id||null});
       return r.success?`📦 Salida: -${r.usado} ${r.unidad} de ${r.descripcion}${r.costo>0?' · '+fmtMoney(r.costo):''}`:('⚠️ '+r.msg);
     }
-    case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) S.cache.memoria.unshift({contenido:v.contenido, fecha:ahoraLocalISO()}); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
+    case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) await refreshAll(); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
     case 'gasto':{ const lote=resolverLote(v.lote_codigo); await HANDLERS.add_gasto({concepto:v.concepto,categoria:v.categoria||'otro',valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return '💸 Gasto registrado'; }
     case 'ingreso':{ await HANDLERS.add_ingreso({concepto:v.concepto,valor_total:parseFloat(v.valor)||0,fecha:v.fecha||null}); return '💰 Ingreso registrado'; }
     case 'jornal':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.registrar_jornal({trabajador:v.trabajador,dias:parseFloat(v.dias)||1,valor_dia:parseFloat(v.valor_dia)||0,lote_id:lote?.id||null,fecha:v.fecha||null}); return r.success?`👷 Jornal · ${fmtMoney(r.total)}`:('⚠️ '+r.msg); }
     case 'crear_tarea':{ const lote=resolverLote(v.lote_codigo); const r=await HANDLERS.create_task({titulo:v.titulo,fecha_limite:v.fecha_limite||null,asignado_a:v.asignado||'todos',lote_id:lote?.id||null}); return r.success?'📋 Tarea programada':('⚠️ '+r.msg); }
     case 'cosecha':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ Elige el lote de la cosecha';
-      const k=_cosechaDeForm(v, lote); if(!k) return '⚠️ Falta cuántas se sacaron'; if(k.falta) return '⚠️ Falta el peso de cada '+_empaqueNorm(v.unidad);
-      const r=await HANDLERS.registrar_cosecha({lote_id:lote.id,...k,calidad:v.calidad||'primera',observaciones:v.observaciones||null,fecha:fechaAgente(v.fecha)||null});
-      return r.success?`🧺 Cosecha: ${k.unidad==='kg'?'':_plural(k.unidades,k.unidad)+' = '}${k.kilos.toLocaleString('es-CO')} kg en ${lote.codigo}`:('⚠️ '+r.msg); }
+      const hechos=[]; let kgTot=0, valTot=0;
+      for(let n=0; v[`_c${n}_n`]!==undefined; n++){
+        const k=_cosechaDeForm({unidad:v.unidad, unidades:v[`_c${n}_n`], peso_unidad:v.peso_unidad, precio_unidad:v[`_c${n}_p`]}, lote);
+        if(!k) continue; if(k.falta) return '⚠️ Falta el peso de cada '+_empaqueNorm(v.unidad);
+        const cat=v[`_c${n}_cat`]||null;
+        const r=await HANDLERS.registrar_cosecha({lote_id:lote.id,...k,calidad:cat,observaciones:v.observaciones||null,fecha:fechaAgente(v.fecha)||null});
+        if(!r.success) return '⚠️ '+r.msg;
+        const val=valorCosecha({...k, volumen_kg:k.kilos}); kgTot+=k.kilos; valTot+=val;
+        hechos.push(`${cat||''} ${k.unidad==='kg'?k.kilos.toLocaleString('es-CO')+' kg':_plural(k.unidades,k.unidad)}${val?' ('+fmtMoney(val)+')':''}`.trim());
+      }
+      if(!hechos.length) return '⚠️ Falta cuántas se sacaron';
+      return `🧺 Cosecha en ${lote.codigo}: ${hechos.join(' + ')} = ${kgTot.toLocaleString('es-CO')} kg${valTot?' · '+fmtMoney(valTot):''}`; }
     case 'completar_tarea':{ const tk=_norm(v.titulo); const t=(S.cache.tasks||[]).find(x=>x.estado==='pendiente'&&_norm(x.titulo).includes(tk)); if(!t) return '⚠️ No encontré esa tarea'; await HANDLERS.complete_task(t.id); return '✅ Tarea completada'; }
     case 'crear_lote':{ const r=await HANDLERS.create_lote({codigo:v.codigo,cultivo:v.cultivo,variedad:v.variedad||null}); return r.success?'🌱 Lote creado':('⚠️ '+r.msg); }
     case 'estado_lote':{ const lote=resolverLote(v.lote_codigo); if(!lote) return '⚠️ No encontré el lote'; const r=await HANDLERS.edit_lote(lote.id,{estado:v.estado}); return r.success?`🌱 ${lote.codigo} → ${v.estado}`:('⚠️ '+r.msg); }
@@ -3364,7 +3476,7 @@ window.flowGestionCiclos = async function(){
   const listHtml = ciclos.length ? ciclos.map(c => {
     const etapas = Array.isArray(c.etapas) ? c.etapas : [];
     return `<div class="card" style="margin-bottom:8px">
-      <div class="card-h"><div class="card-t">${c.cultivo}${c.variedad?' · '+c.variedad:''}</div><div class="row gap6"><span class="badge bg-green">${c.duracion_dias} días</span><button class="btn btn-sm btn-ghost" onclick="flowDeleteCiclo('${c.id}','${c.cultivo}')" style="color:var(--rd);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>
+      <div class="card-h"><div class="card-t">${c.cultivo}${c.variedad?' · '+c.variedad:''}</div><div class="row gap6"><span class="badge bg-green">${c.duracion_dias} días</span><button class="btn btn-sm btn-ghost" onclick="M._close(null); setTimeout(() => flowEditCiclo('${c.id}'), 150)" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCiclo('${c.id}','${c.cultivo}')" style="color:var(--rd);padding:4px;border:none"><i class="ti ti-trash"></i></button></div></div>
       ${etapas.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${etapas.map(e=>`<span class="ciclo-etapa-chip"><i class="ti ti-plant"></i>${e.nombre} (día ${e.dia_inicio})</span>`).join('')}</div>` : ''}
     </div>`;
   }).join('') : `<div class="text-tiny" style="text-align:center;padding:16px">Sin ciclos definidos. Crea uno para que la app calcule automáticamente los días de cada lote.</div>`;
@@ -3426,7 +3538,7 @@ function renderChatInterface(){
     if (m.mediaPreview) mediaHtml = m.mediaIsVideo ? `<video src="${m.mediaPreview}" class="media-prev" controls></video>` : `<img src="${m.mediaPreview}" class="media-prev">`;
     const isUser = m.role === 'user';
     const av = isUser ? `<div class="mrow-av user">${initial(S.user?.display)}</div>` : `<div class="mrow-av"><i class="ti ti-leaf"></i></div>`;
-    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div>${m.informe && m.informe.n ? `<button class="inf-btn" onclick="abrirInforme(${idx})"><i class="ti ti-table"></i> Ver informe${m.informe.n > 1 ? ' (' + m.informe.n + ')' : ''}</button>` : ''}${m.preguntaIA ? `<button class="inf-btn" onclick="preguntarIA(${idx})"><i class="ti ti-sparkles"></i> Preguntar a la IA</button>` : ''}${m.boton ? `<button class="inf-btn" onclick="botonMensaje(${idx})"><i class="ti ${m.boton.icon||'ti-click'}"></i> ${esc(m.boton.label)}</button>` : ''}</div></div>`;
+    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div>${m.informe && m.informe.n ? `<button class="inf-btn" onclick="abrirInforme(${idx})"><i class="ti ti-table"></i> Ver informe${m.informe.n > 1 ? ' (' + m.informe.n + ')' : ''}</button>` : ''}${m.preguntaIA ? `<button class="inf-btn" onclick="preguntarIA(${idx})"><i class="ti ti-sparkles"></i> Preguntar a la IA</button>` : ''}${m.ultimo ? `<div class="row gap6" style="flex-wrap:wrap"><button class="inf-btn" onclick="corregirUltimo('${m.ultimo}','editar')"><i class="ti ti-edit"></i> ${m.ultimo === 'apunte' ? 'Ver apuntes' : 'Corregir'}</button>${m.ultimo === 'apunte' ? '' : `<button class="inf-btn" style="color:var(--rd);background:var(--p-red);border-color:#F1B5B5" onclick="corregirUltimo('${m.ultimo}','borrar')"><i class="ti ti-trash"></i> Borrar</button>`}</div>` : ''}${m.boton ? `<button class="inf-btn" onclick="botonMensaje(${idx})"><i class="ti ${m.boton.icon||'ti-click'}"></i> ${esc(m.boton.label)}</button>` : ''}</div></div>`;
   }).join('') : '';
 
   const cameraBtn = `<button class="icb" id="btn-cam" title="Abrir cámara" style="border-color:var(--bl);background:#EEF4FC"><i class="ti ti-camera" style="color:var(--bl)"></i></button>`;
@@ -3524,11 +3636,30 @@ function renderBitacora(){
    ═══════════════════════════════════════════════════════════════ */
 /* Cómo se siembra y se empaca cada cultivo (solo sugerencias: todo se puede cambiar) */
 const PERFIL_CULTIVO = [
-  { rx:/tomate/, siembra:'plantas', empaque:'canastilla', peso:22 },
-  { rx:/cebolla/, siembra:'libras', empaque:'bulto', peso:50 },
-  { rx:/repollo|\bcol\b/, siembra:'papeletas', empaque:'bulto', peso:null },
-  { rx:/frijol|arveja|habichuela/, siembra:'kg', empaque:'kg', peso:1 },
+  { rx:/tomate/, siembra:'plantas', empaque:'canastilla', peso:22, categorias:['Grueso','Parejo','Manaluz','Pichurria'] },
+  { rx:/cebolla/, siembra:'libras', empaque:'bulto', peso:50, categorias:['Gruesa','Cero','Pareja'] },
+  { rx:/repollo|\bcol\b/, siembra:'papeletas', empaque:'bulto', peso:null, categorias:['Primera','Segunda'] },
+  { rx:/frijol|arveja|habichuela/, siembra:'kg', empaque:'kg', peso:1, categorias:['Primera','Segunda'] },
 ];
+/* Categorías de calidad del lote: las guardadas en el lote; si no hay, las del cultivo. Siempre se pueden crear nuevas. */
+function categoriasLote(l){
+  const propias = String(l?.categorias || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (propias.length) return propias;
+  const pf = PERFIL_CULTIVO.find(p => p.rx.test(_normTxt(l?.cultivo || '')));
+  return pf?.categorias ? [...pf.categorias] : ['Primera','Segunda'];
+}
+/* Último precio usado en un lote para una categoría y unidad */
+function ultimoPrecio(l, categoria, unidad){
+  const c = (S.cache.cosechas || []).filter(x => x.lote_id === l?.id && _normTxt(x.calidad) === _normTxt(categoria) && parseFloat(x.precio_unidad) > 0 && (!unidad || _empaqueNorm(x.unidad) === _empaqueNorm(unidad)))
+    .sort((a,b) => tsOrden(b.fecha_recoleccion) - tsOrden(a.fecha_recoleccion))[0];
+  return c ? parseFloat(c.precio_unidad) : null;
+}
+/* Valor de una cosecha: unidades × precio (o kilos × precio si se vendió por kilo) */
+function valorCosecha(c){
+  const p = parseFloat(c.precio_unidad) || 0; if (!p) return 0;
+  const u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad);
+  return (u > 0 && un !== 'kg') ? u * p : (parseFloat(c.volumen_kg) || 0) * p;
+}
 const UNIDADES_SIEMBRA = ['plantas','libras','papeletas','sobres','kg','gramos'];
 const EMPAQUES = ['canastilla','bulto','medio bulto','caja','arroba','kg'];
 function perfilCultivo(l){ const c = _normTxt(l?.cultivo || ''); return PERFIL_CULTIVO.find(p => p.rx.test(c)) || { siembra:'plantas', empaque:'kg', peso:1 }; }
@@ -3565,9 +3696,24 @@ function _plural(n, u){
 }
 /* Texto de una cosecha: "36 canastillas × 22 kg = 792 kg" */
 function textoCosecha(c){
-  const kg = parseFloat(c.volumen_kg) || 0, u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad);
-  if (u > 0 && un !== 'kg') return `${_plural(u, un)} × ${(parseFloat(c.peso_unidad)||0).toLocaleString('es-CO')} kg = ${kg.toLocaleString('es-CO')} kg`;
-  return `${kg.toLocaleString('es-CO')} kg`;
+  const kg = parseFloat(c.volumen_kg) || 0, u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad), v = valorCosecha(c);
+  const base = (u > 0 && un !== 'kg') ? `${_plural(u, un)} × ${(parseFloat(c.peso_unidad)||0).toLocaleString('es-CO')} kg = ${kg.toLocaleString('es-CO')} kg` : `${kg.toLocaleString('es-CO')} kg`;
+  return base + (v ? ` · ${fmtMoney(v)}` : '');
+}
+/* Kilos, unidades y valor por categoría de calidad */
+function porCategoria(cs){
+  const m = new Map();
+  cs.forEach(c => {
+    const k = (c.calidad || 'Sin categoría').trim(), key = _normTxt(k);
+    const g = m.get(key) || { categoria: k[0].toUpperCase() + k.slice(1), kg:0, unidades:{}, valor:0, n:0 };
+    g.n++; g.kg += parseFloat(c.volumen_kg) || 0; g.valor += valorCosecha(c);
+    const u = parseFloat(c.unidades) || 0, un = _empaqueNorm(c.unidad);
+    if (u > 0 && un !== 'kg') g.unidades[un] = (g.unidades[un] || 0) + u;
+    m.set(key, g);
+  });
+  const total = [...m.values()].reduce((a,g) => a + g.kg, 0);
+  return [...m.values()].map(g => ({ ...g, pct: total ? Math.round(g.kg / total * 1000) / 10 : 0, unidadesTxt: Object.entries(g.unidades).map(([un, n]) => _plural(n, un)).join(' + ') }))
+    .sort((a,b) => b.kg - a.kg);
 }
 /* Rendimiento de un lote: totales por empaque, kg y lo que rinde cada planta / libra / papeleta */
 function rendimientoLote(l){
@@ -3599,7 +3745,9 @@ function rendimientoLote(l){
   if (costo > 0 && kg > 0) datos.push([fmtMoney(costo / kg), 'Costo por kg']);
   if (costo > 0 && bultosEq) datos.push([fmtMoney(costo / bultosEq), 'Costo por bulto']);
   if (costo > 0) datos.push([fmtMoney(costo), 'Invertido']);
-  return { cs, kg, porEmpaque, bultosEq, estimadas, sembrado, uniS, unidadSing, datos, costo,
+  const valor = cs.reduce((a,c) => a + valorCosecha(c), 0);
+  if (valor > 0){ datos.push([fmtMoney(valor), 'Valor cosechado']); if (costo > 0) datos.push([fmtMoney(valor - costo), valor >= costo ? 'Ganancia' : 'Falta para cubrir costo']); }
+  return { cs, kg, valor, categorias: porCategoria(cs), porEmpaque, bultosEq, estimadas, sembrado, uniS, unidadSing, datos, costo,
     resumen: !sembrado ? '' : `${uniS !== 'plantas' && bultosEq ? (Math.round(bultosEq / sembrado * 10) / 10).toLocaleString('es-CO') + ' bultos/' + unidadSing + ' · ' : ''}${(Math.round(kg / sembrado * 100) / 100).toLocaleString('es-CO')} kg/${unidadSing}` };
 }
 
@@ -3701,14 +3849,20 @@ function renderCultivos(){
       ${(() => {
         const cs = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id);
         const btnCos = `<button class="btn btn-sm btn-soft" onclick="flowNuevaCosecha('${l.id}','${escA(l.codigo||'')}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-plus"></i> Cosecha</button>`;
-        if (!cs.length) return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote.</div>`, { resumen:'0', acciones: btnCos });
+        if (!cs.length) return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin cosechas registradas en este lote. Categorías: ${esc(categoriasLote(l).join(', '))} <button class="ver-mas" onclick="flowCategoriasLote('${l.id}')">cambiar</button> · Siembra: <button class="ver-mas" onclick="flowSiembraLote('${l.id}')">${l.siembra_cantidad ? _plural(parseFloat(l.siembra_cantidad), l.siembra_unidad || perfilCultivo(l).siembra) : 'agregar'}</button></div>`, { resumen:'0', acciones: btnCos });
         const totalKg = cs.reduce((a,c)=>a+(parseFloat(c.volumen_kg)||0),0);
         const R = rendimientoLote(l);
         const sembradoTxt = R.sembrado ? `Sembrado: <b>${_plural(R.sembrado, R.uniS)}</b>` : `Falta decir cuánto se sembró (${R.uniS}) para calcular el rendimiento.`;
         const resumen = `<div class="spec-box" style="margin-bottom:8px;display:flex;align-items:center;gap:8px"><span style="flex:1">${sembradoTxt}</span><button class="btn btn-sm btn-soft" onclick="flowSiembraLote('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-edit"></i> ${R.sembrado ? 'Cambiar' : 'Agregar'}</button></div>
-          <div class="map-dims rend-grid" style="margin-bottom:8px">${R.datos.map(([v, t]) => `<div><b>${v}</b>${t}</div>`).join('')}</div>`;
-        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title">${textoCosecha(c)} · ${esc(c.calidad||'normal')}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
-          { resumen: `${totalKg.toLocaleString('es-CO')} kg${R.resumen ? ' · ' + R.resumen : ''}`, acciones: btnCos });
+          <div class="map-dims rend-grid" style="margin-bottom:8px">${R.datos.map(([v, t]) => `<div><b>${v}</b>${t}</div>`).join('')}</div>
+          <div class="sec-t" style="margin:4px 0 6px"><span><i class="ti ti-tags"></i> Por calidad</span><button class="btn btn-sm btn-soft" onclick="flowCategoriasLote('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-edit"></i> Categorías</button></div>
+          <div class="inf-wrap" style="max-height:none;margin-top:0"><table class="inf-table"><thead><tr><th>Calidad</th><th>Kilos</th><th>%</th><th>Empaques</th><th>Valor</th></tr></thead><tbody>
+            ${R.categorias.map(g => `<tr><td>${esc(g.categoria)}</td><td class="num">${g.kg.toLocaleString('es-CO', { maximumFractionDigits:1 })}</td><td class="num">${g.pct.toLocaleString('es-CO')}%</td><td>${esc(g.unidadesTxt || '—')}</td><td class="num">${g.valor ? fmtMoney(g.valor) : '—'}</td></tr>`).join('')}
+            <tr><td><b>Total</b></td><td class="num"><b>${R.kg.toLocaleString('es-CO', { maximumFractionDigits:1 })}</b></td><td class="num">100%</td><td></td><td class="num"><b>${R.valor ? fmtMoney(R.valor) : '—'}</b></td></tr>
+          </tbody></table></div>
+          <div class="text-tiny" style="margin:4px 0 8px;color:var(--tx3)">Las categorías sin precio no suman al valor. Edita la cosecha para ponerle precio.</div>`;
+        return plegable('lote-cosechas', `<i class="ti ti-basket"></i> Cosechas`, resumen + `<div class="card" style="padding:4px 14px">${cs.map(c=>`<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title"><b>${esc(c.calidad ? c.calidad[0].toUpperCase() + c.calidad.slice(1) : 'Sin categoría')}</b> · ${textoCosecha(c)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(c.fecha_recoleccion)}</span>${c.observaciones?`<span>${esc(c.observaciones)}</span>`:''}</div></div><div class="row gap6" style="flex-shrink:0"><button class="btn btn-sm btn-ghost" onclick="flowEditCosecha('${c.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteCosecha('${c.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button></div></div>`).join('')}</div>`,
+          { resumen: `${totalKg.toLocaleString('es-CO')} kg${R.resumen ? ' · ' + R.resumen : ''}${R.valor ? ' · ' + fmtMoney(R.valor) : ''}`, acciones: btnCos });
       })()}
       ${(() => {
         const todas = (S.cache.fotos||[]).filter(f => f.lote_id === l.id), fs = todas.slice(0,6);
@@ -3728,6 +3882,8 @@ function renderCultivos(){
           <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
             <button class="btn btn-sm btn-ghost" onclick="flowControlarPlaga('${p.id}','${escA(p.tipo||'')}','${escA(l.codigo)}')" style="padding:4px 8px;font-size:11px"><i class="ti ti-spray"></i> Controlar</button>
             <button class="btn btn-sm btn-ghost" onclick="flowCerrarPlaga('${p.id}','${escA(p.tipo||'')}')" style="color:var(--g);padding:4px;border:none"><i class="ti ti-circle-check"></i></button>
+            <button class="btn btn-sm btn-ghost" onclick="flowEditPlaga('${p.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button>
+            <button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button>
           </div>
         </div>`).join(''), { abierta: true, resumen: `⚠️ ${pl.length}`, acciones: btnPl });
       })()}
@@ -4684,7 +4840,8 @@ window.flowEditCosecha = async function(id){
   const k = _cosechaDeForm(r, l);
   if (!k){ toast('Escribe cuántas se sacaron'); return; }
   if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
-  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:k.kilos, unidad:k.unidad, unidades:k.unidades, peso_unidad:k.peso_unidad, calidad:r.calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null });
+  const calidad = await _categoriaDeForm(r, l);
+  const resp = await HANDLERS.edit_cosecha(id, { volumen_kg:k.kilos, unidad:k.unidad, unidades:k.unidades, peso_unidad:k.peso_unidad, precio_unidad:k.precio_unidad, calidad, observaciones:r.observaciones||null, fecha_recoleccion: r.fecha || null });
   toast(resp.success ? '✅ Cosecha actualizada' : resp.msg); if (resp.success) render();
 };
 window.flowDeleteCosecha = async function(id){
@@ -4726,19 +4883,45 @@ function _camposCosecha(l, c = {}){
     { name:'unidad', label:'¿En qué se sacó?', type:'select', options: EMPAQUES.map(e => ({ value:e, label: e === 'kg' ? 'Kilos sueltos' : e[0].toUpperCase() + e.slice(1) })), initial: unidad },
     { name:'unidades', label:'¿Cuántas? (canastillas, bultos… o kilos si es «Kilos sueltos»)', type:'number', required:true, initial: c.unidades != null ? String(c.unidades) : (c.volumen_kg && !c.unidad ? String(c.volumen_kg) : ''), placeholder:'Ej: 36' },
     { name:'peso_unidad', label:'Peso de cada una (kg) · no aplica para kilos sueltos', type:'number', initial: peso ? String(peso) : '', placeholder:'Ej: 22' },
-    { name:'calidad', label:'Calidad', type:'select', options:[{value:'primera',label:'Primera'},{value:'segunda',label:'Segunda'},{value:'normal',label:'Normal'}], initial: c.calidad || 'primera' },
+    { name:'calidad', label:'Calidad / categoría', type:'select', options: _opcionesCategoria(l, c.calidad), initial: c.calidad ? _catCanon(l, c.calidad) : categoriasLote(l)[0] },
+    { name:'nueva_categoria', label:'¿Categoría nueva? Escríbela aquí (si no, déjalo vacío)', type:'text', placeholder:'Ej: Extra, Tercera, Riche' },
+    { name:'precio_unidad', label:`Precio de venta por ${unidad === 'kg' ? 'kilo' : unidad} (opcional)`, type:'number', initial: c.precio_unidad ? String(c.precio_unidad) : '', placeholder: _pistaPrecios(l) || 'Ej: 80000' },
     { name:'observaciones', label:'Observaciones (opcional)', type:'text', initial: c.observaciones || '' },
     { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: c.fecha_recoleccion ? toDateInput(c.fecha_recoleccion) : hoyISO() }
   ];
+}
+/* Opciones de categoría: las del lote más la que ya tenga el registro */
+function _catCanon(l, cat){ const c = categoriasLote(l).find(x => _normTxt(x) === _normTxt(cat)); return c || String(cat || '').trim(); }
+function _opcionesCategoria(l, actual){
+  const cats = categoriasLote(l);
+  if (actual && !cats.some(x => _normTxt(x) === _normTxt(actual))) cats.push(String(actual).trim());
+  return cats.map(x => ({ value:x, label:x }));
+}
+/* Pista con los últimos precios de cada categoría: "Grueso $80.000 · Parejo $60.000" */
+function _pistaPrecios(l){
+  return categoriasLote(l).map(c => { const p = ultimoPrecio(l, c); return p ? `${c} ${fmtMoney(p)}` : ''; }).filter(Boolean).join(' · ');
+}
+/* Categoría elegida o nueva; si es nueva, se agrega a la lista del lote */
+async function _categoriaDeForm(r, l){
+  const nueva = String(r.nueva_categoria || '').trim();
+  if (!nueva) return r.calidad || null;
+  const nom = nueva[0].toUpperCase() + nueva.slice(1);
+  const cats = categoriasLote(l);
+  if (l && !cats.some(x => _normTxt(x) === _normTxt(nom))){
+    const r2 = await HANDLERS.edit_lote(l.id, { categorias: [...cats, nom].join(', ') });
+    if (r2.success) toast(`🏷️ Categoría «${nom}» creada para ${l.codigo}`);
+  }
+  return nom;
 }
 /* Convierte lo del formulario en kilos y datos de empaque. Devuelve null si falta el peso */
 function _cosechaDeForm(r, l){
   const unidad = _empaqueNorm(r.unidad), n = parseFloat(r.unidades) || 0;
   if (!(n > 0)) return null;
-  if (unidad === 'kg') return { kilos:n, unidad:'kg', unidades:n, peso_unidad:1 };
+  const precio = parseFloat(r.precio_unidad) || null;
+  if (unidad === 'kg') return { kilos:n, unidad:'kg', unidades:n, peso_unidad:1, precio_unidad:precio };
   const peso = parseFloat(r.peso_unidad) || pesoSugerido(l, unidad);
   if (!(peso > 0)) return { falta:'peso' };
-  return { kilos: Math.round(n * peso * 100) / 100, unidad, unidades:n, peso_unidad:peso };
+  return { kilos: Math.round(n * peso * 100) / 100, unidad, unidades:n, peso_unidad:peso, precio_unidad:precio };
 }
 window.flowNuevaCosecha = async function(loteId, codigo){
   const l = S.cache.lotes.find(x => x.id == loteId);
@@ -4747,8 +4930,21 @@ window.flowNuevaCosecha = async function(loteId, codigo){
   const k = _cosechaDeForm(r, l);
   if (!k){ toast('Escribe cuántas se sacaron'); return; }
   if (k.falta){ toast('Escribe el peso de cada ' + _empaqueNorm(r.unidad)); return; }
-  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, ...k, calidad:r.calidad, observaciones:r.observaciones||null, fecha: r.fecha || null });
-  toast(resp.success ? `🌾 Cosecha: ${k.unidad === 'kg' ? '' : _plural(k.unidades, k.unidad) + ' = '}${k.kilos.toLocaleString('es-CO')} kg` : resp.msg); if (resp.success) render();
+  const calidad = await _categoriaDeForm(r, l);
+  const resp = await HANDLERS.registrar_cosecha({ lote_id:loteId, ...k, calidad, observaciones:r.observaciones||null, fecha: r.fecha || null });
+  toast(resp.success ? `🌾 Cosecha ${calidad || ''}: ${k.unidad === 'kg' ? '' : _plural(k.unidades, k.unidad) + ' = '}${k.kilos.toLocaleString('es-CO')} kg` : resp.msg); if (resp.success) render();
+};
+/* Ver, renombrar, agregar o quitar las categorías de calidad del lote */
+window.flowCategoriasLote = async function(id){
+  const l = S.cache.lotes.find(x => x.id == id); if (!l) return;
+  const r = await M.form({ title:`Categorías de calidad · ${l.codigo}`, sub:'Escríbelas separadas por coma. Puedes agregar, cambiar el nombre o quitar. Las cosechas ya guardadas conservan su categoría.', okText:'Guardar', fields:[
+    { name:'categorias', label:'Categorías', type:'textarea', required:true, initial: categoriasLote(l).join(', ') }
+  ]});
+  if (!r) return;
+  const lista = [...new Set(String(r.categorias).split(/[,\n]/).map(x => x.trim()).filter(Boolean).map(x => x[0].toUpperCase() + x.slice(1)))];
+  const resp = await HANDLERS.edit_lote(id, { categorias: lista.join(', ') });
+  if (resp.success && S.activeLote?.id == id) S.activeLote = S.cache.lotes.find(x => x.id == id) || S.activeLote;
+  toast(resp.success ? '🏷️ Categorías guardadas' : resp.msg); if (resp.success) render();
 };
 /* Cuánto se sembró en el lote (plantas, libras, papeletas…) */
 window.flowSiembraLote = async function(id){
@@ -4831,10 +5027,11 @@ function renderPlagas(){
     const loteNom = p.lote?.codigo || 'Finca general';
     const ctrl = p.producto_usado ? `<div class="plaga-control"><i class="ti ti-spray"></i> <b>Control:</b> ${esc(p.producto_usado)}${p.dosis?' · '+esc(p.dosis):''} ${p.fecha_control?'('+esc(p.fecha_control)+')':''} ${p.resultado?'· '+esc(p.resultado):''}</div>` : '';
     const acciones = esControlada ? 
-      `<button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button>` :
+      `<div class="row gap6"><button class="btn btn-sm btn-ghost" onclick="flowEditPlaga('${p.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button></div>` :
       `<div class="row gap6">
         <button class="btn btn-sm btn-ghost" onclick="flowControlarPlaga('${p.id}','${escA(p.tipo||'')}','${escA(loteNom)}')" style="padding:5px" title="Registrar control"><i class="ti ti-spray"></i> Controlar</button>
         <button class="btn btn-sm btn-ghost" onclick="flowCerrarPlaga('${p.id}','${escA(p.tipo||'')}')" style="color:var(--g);padding:5px;border:none" title="Marcar controlada"><i class="ti ti-circle-check"></i></button>
+        <button class="btn btn-sm btn-ghost" onclick="flowEditPlaga('${p.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button>
         <button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--rd);padding:5px;border:none"><i class="ti ti-trash"></i></button>
       </div>`;
     return `<div class="plaga-card ${sev}">
@@ -4910,6 +5107,64 @@ window.flowControlarPlaga = async function(id, tipo, lote){
   const resp = await HANDLERS.controlar_plaga(id, { producto:r.producto, dosis:r.dosis, resultado:r.resultado, fecha:r.fecha||fechaLocalISO() });
   toast(resp.success ? '✅ Control registrado' : resp.msg);
   if (resp.success) render();
+};
+
+window.flowEditPlaga = async function(id){
+  const p = (S.cache.plagas || []).find(x => x.id == id); if (!p) return;
+  const loteOpts = [{value:'', label:'Finca general'}, ...S.cache.lotes.map(l => ({ value:l.id, label:`${l.codigo} · ${l.cultivo}` }))];
+  const r = await M.form({ title:'Editar plaga o enfermedad', okText:'Guardar cambios', fields:[
+    { name:'tipo', label:'¿Qué plaga o enfermedad?', type:'text', required:true, initial: p.tipo || '' },
+    { name:'lote_id', label:'Lote afectado', type:'select', options: loteOpts, initial: p.lote_id || '' },
+    { name:'severidad', label:'Severidad', type:'select', options:[{value:'leve',label:'🟢 Leve'},{value:'moderada',label:'🟡 Moderada'},{value:'severa',label:'🔴 Severa'}], initial: p.severidad || 'leve' },
+    { name:'descripcion', label:'Descripción', type:'text', initial: p.descripcion || '' },
+    { name:'fecha_deteccion', label:'Fecha de detección', type:'date', initial: toDateInput(p.fecha_deteccion) },
+    { name:'producto_usado', label:'Producto con que se controló (si aplica)', type:'text', initial: p.producto_usado || '' },
+    { name:'dosis', label:'Dosis', type:'text', initial: p.dosis || '' },
+    { name:'resultado', label:'Resultado', type:'text', initial: p.resultado || '' }
+  ]});
+  if (!r) return;
+  const resp = await HANDLERS.edit_plaga(id, { tipo:r.tipo, lote_id:r.lote_id || null, severidad:r.severidad, descripcion:r.descripcion || null, fecha_deteccion:r.fecha_deteccion || p.fecha_deteccion,
+    producto_usado:r.producto_usado || null, dosis:r.dosis || null, resultado:r.resultado || null });
+  toast(resp.success ? '✅ Plaga actualizada' : resp.msg); if (resp.success) render();
+};
+
+window.flowEditCiclo = async function(id){
+  const c = (S.cache.ciclos || []).find(x => x.id == id); if (!c) return;
+  const r = await M.form({ title:'Editar ciclo de cultivo', okText:'Guardar cambios', fields:[
+    { name:'cultivo', label:'Cultivo', type:'text', required:true, initial: c.cultivo || '' },
+    { name:'variedad', label:'Variedad (opcional)', type:'text', initial: c.variedad || '' },
+    { name:'duracion_dias', label:'Duración total (días)', type:'number', required:true, initial: String(c.duracion_dias || '') }
+  ]});
+  if (!r) return;
+  if (!S.isOnline){ toast('Necesitas conexión'); return; }
+  const { error } = await sb.from('ciclos_cultivo').update({ cultivo:r.cultivo, variedad:r.variedad || null, duracion_dias:parseInt(r.duracion_dias) }).eq('id', id);
+  if (error){ toast('Error: ' + error.message); return; }
+  await refreshAll(); toast('✅ Ciclo actualizado'); render();
+};
+
+/* Apuntes de la finca ("recuerda que…"): ver, corregir y borrar */
+window.flowApuntes = function(){
+  const lista = S.cache.memoria || [];
+  const filas = lista.length ? lista.map(m => `<div class="mini-list-item"><div class="mini-list-dot done"></div><div class="mini-list-body"><div class="mini-list-title" style="font-weight:500">${esc(m.contenido)}</div><div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(m.fecha || m.creado_en)}</span></div></div>
+    <div class="row gap6" style="flex-shrink:0">${m.id ? `<button class="btn btn-sm btn-ghost" onclick="flowEditApunte('${m.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteApunte('${m.id}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button>` : ''}</div></div>`).join('')
+    : `<div class="text-tiny" style="padding:12px;text-align:center">Aún no hay apuntes. En el chat escribe «recuerda que …».</div>`;
+  M._open(`<div class="modal-h"><i class="ti ti-bulb"></i> Apuntes de la finca</div><div class="modal-sub">Lo que le pediste a la app que recuerde. Se muestran los 20 más recientes.</div><div class="card" style="padding:4px 12px">${filas}</div>
+    <div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="M._close(null)">Cerrar</button></div>`);
+};
+window.flowEditApunte = async function(id){
+  const m = (S.cache.memoria || []).find(x => x.id == id); if (!m) return;
+  M._close(null);
+  const r = await M.form({ title:'Editar apunte', okText:'Guardar', fields:[{ name:'contenido', label:'Apunte', type:'textarea', required:true, initial: m.contenido || '' }] });
+  if (!r) return;
+  const resp = await HANDLERS.edit_memoria(id, r.contenido);
+  toast(resp.success ? '✅ Apunte actualizado' : resp.msg);
+};
+window.flowDeleteApunte = async function(id){
+  M._close(null);
+  const ok = await M.confirm({ title:'Borrar apunte', body:'¿Eliminar este apunte?', okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
+  if (!ok) return;
+  const resp = await HANDLERS.delete_memoria(id);
+  toast(resp.success ? '🗑️ Apunte borrado' : resp.msg);
 };
 
 window.flowCerrarPlaga = async function(id, tipo){
