@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v9.9</title>
+<title>Finca El Retiro v10.0</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -121,6 +121,19 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .bbl-a{background:var(--s);border:1px solid var(--bd);border-bottom-left-radius:5px}
 .bbl-u{background:linear-gradient(180deg,#F0F8DF,var(--gl));border:1px solid var(--gb);border-bottom-right-radius:5px}
 .bbl-txt{font-size:13.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.inf-btn{margin-top:8px;display:inline-flex;align-items:center;gap:5px;font-family:var(--f);font-size:12px;font-weight:600;color:var(--g);background:var(--gl);border:1px solid var(--gb);border-radius:999px;padding:5px 11px;cursor:pointer}
+.inf-chips{display:flex;gap:6px;overflow-x:auto;padding:0 2px 8px;scrollbar-width:none}
+.inf-chips::-webkit-scrollbar{display:none}
+.inf-chip{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;font-family:var(--f);font-size:11.5px;font-weight:600;color:var(--tx2);background:var(--s2);border:1px solid var(--bd);border-radius:999px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.inf-chip i{color:var(--g);font-size:14px}
+.inf-chip:active{transform:scale(.96)}
+.inf-wrap{overflow:auto;max-height:58vh;border:1px solid var(--bd);border-radius:10px;margin:8px 0 4px;-webkit-overflow-scrolling:touch}
+.inf-table{border-collapse:collapse;width:100%;font-size:12px;line-height:1.35}
+.inf-table th{position:sticky;top:0;background:var(--s3);color:var(--tx2);font-weight:700;text-align:left;padding:7px 8px;white-space:nowrap;border-bottom:1px solid var(--bd)}
+.inf-table td{padding:6px 8px;border-bottom:1px solid var(--s3);vertical-align:top;color:var(--tx);min-width:60px}
+.inf-table td:first-child{white-space:nowrap}
+.inf-table td.num{text-align:right;white-space:nowrap;font-feature-settings:'tnum'}
+.inf-table tr:nth-child(even) td{background:var(--s2)}
 .media-prev{width:170px;border-radius:10px;margin-bottom:7px;border:1px solid var(--bd);display:block;object-fit:cover}
 
 .chat-inp{padding:10px 12px 12px;background:var(--s);border-top:1px solid var(--bd)}
@@ -1604,23 +1617,6 @@ function respuestaLocal(textoRaw){
     const l = (S.cache.tasks||[]).filter(x=>x.estado==='pendiente' && x.fecha_limite===man);
     return l.length ? `📋 Para mañana (${l.length}):\n`+l.map(x=>'• '+x.titulo+(x.asignado?.nombre_corto?` (${x.asignado.nombre_corto})`:'')).join('\n') : '✅ No hay tareas programadas para mañana.';
   }
-  // Todas las tareas pendientes
-  if (/\b(que|cuales)\b.*\b(tareas|pendientes?)\b|^(tareas|pendientes)\b/.test(tn)){
-    const pend = (S.cache.tasks||[]).filter(x=>x.estado==='pendiente').sort((a,b)=>String(a.fecha_limite||'9999').localeCompare(String(b.fecha_limite||'9999')));
-    if (!pend.length) return '✅ No hay tareas pendientes.';
-    return `📋 Pendientes (${pend.length}):\n` + pend.slice(0,15).map(x=>`• ${x.titulo}${x.fecha_limite?' · '+fmtFecha(x.fecha_limite)+(x.fecha_limite<hoyISO?' ⚠️ vencida':''):''}${x.lote?.codigo?' · '+x.lote.codigo:''}`).join('\n') + (pend.length>15?`\n…y ${pend.length-15} más.`:'');
-  }
-  // Plagas activas
-  if (/\b(que|cuales|hay)\b.*\b(plagas?|enfermedad\w*)\b.*\b(activ\w*|hay|tenemos)\b|\bplagas? activas?\b/.test(tn)){
-    const pl = (S.cache.plagas||[]).filter(p=>p.activa);
-    return pl.length ? `🐛 Plagas activas (${pl.length}):\n` + pl.map(p=>`• ${p.tipo} · ${p.lote?.codigo||'finca'} · ${p.severidad||'leve'} · desde ${fmtFecha(p.fecha_deteccion)}${p.producto_usado?' · tratada con '+p.producto_usado:''}`).join('\n') : '✅ No hay plagas activas registradas.';
-  }
-  // Qué se está acabando en bodega
-  if (/\b(se (esta|estan) acabando|que (falta|hay que comprar)|stock bajo|poco stock|que se acabo|agotad)/.test(tn)){
-    const a = Alerts.compute();
-    const l = [...a.stockCero.map(i=>`• ${i.descripcion}: agotado`), ...a.stockBajo.map(i=>`• ${i.descripcion}: quedan ${i.cantidad_actual} ${i.unidad_medida||''}`)];
-    return l.length ? `📦 Por reponer:\n${l.join('\n')}` : '✅ Nada se está acabando en bodega.';
-  }
   // Clima
   if (/\b(clima|va a llover|llueve|lloviendo|lluvia|temperatura|pronostico)\b/.test(tn)){
     const w = Weather.contextForAgent();
@@ -2409,7 +2405,7 @@ function _tareaPendiente(t){
   return pts >= 0.34 ? mejor : null;
 }
 
-/* ── PREGUNTAS SOBRE LOS REGISTROS ── traduce la pregunta a filtros de consultarRegistros, sin IA */
+/* ── PREGUNTAS SOBRE LOS REGISTROS ── (las resuelve el motor de INFORMES) */
 const RX_CONSEJO = /\b(debo|deberia|debemos|toca|hay que|conviene|recomiend\w*|se puede|puedo|podemos|sirve|como se|como hago|que hago|que le (echo|aplico|pongo)|que es|para que|por que|porque|cual es (el|la) mejor|dosis|mezclar|compatible)\b/;
 const STOP_CONSULTA = new Set(('cuando cuanto cuanta cuantos cuantas fue fueron era sido la el los las lo del de en por para que se ha he has han hemos hice hizo hicimos hicieron ' +
   'ultima ultimo ultimas ultimos primera primer primero vez veces total todo toda todos todas lote lotes finca este esta estos estas mes semana ano dia dias hace hasta desde entre ' +
@@ -2417,41 +2413,6 @@ const STOP_CONSULTA = new Set(('cuando cuanto cuanta cuantos cuantas fue fueron 
   'kilos kilo vendido vendimos vendi venta ventas ingreso ingresos plagas plaga registros registro labores labor hay tengo tenemos dime muestrame lista historial resumen ' +
   'con sin al le les me mi nos un una uno es son va van lleva llevamos llevan llevo cual cuales como donde hecho hacer ya mas menos sobre pasado pasada ' +
   'compre compramos compra compras comprado sacamos salido produjo producido sale salio ha hay habido tuvimos hubo cada').split(' '));
-function consultaLocal(texto){
-  const t0 = _txt(texto).replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!t0 || RX_CONSEJO.test(t0)) return null;
-  const rango = _rango(t0);
-  const t = rango ? (t0.slice(0, rango.i) + ' ' + t0.slice(rango.i + rango.n)).replace(/\s+/g,' ').trim() : t0;
-
-  let tabla = 'labores';
-  if (/\bjornal/.test(t)) tabla = 'jornales';
-  else if (/cosech|produj|producido|produccion|\bkilos?\b.*\b(sac|recog|salier)/.test(t)) tabla = 'cosechas';
-  else if (/\bvend|\bventa|\bingres|\bganad|\bcobr|nos pagaron|me pagaron/.test(t)) tabla = 'ingresos';
-  else if (/plaga|enfermedad|hongo|gusano|trips|arana|mosca|acaro|ataque|\bgota\b|roya|antracnosis|mildeo|picudo|broca/.test(t)) tabla = 'plagas';
-  else if (/\bcompr|\b(cuesta|vale|precio)\b/.test(t)) tabla = 'gastos';
-  else if (/gast|plata|dinero|costo|costad|invert|pagu|pagad|pagamos|egreso/.test(t)) tabla = 'gasto_total';
-  const conValor = !['labores','plagas'].includes(tabla);
-
-  const pideHist = /\b(ultima vez|primera vez|hace cuanto|cuantas veces|que se hizo|que hicimos|que se ha hecho|historial|lista de|registros de)\b/.test(t);
-  const esCuando = /^(y\s+)?cuando\b/.test(t) || /\bcuando (fue|se|hicimos|hice|tuvimos|hubo|le|lo|la)\b/.test(t);
-  const esCuanto = /\bcuant[oa]s?\b/.test(t);
-  if (!pideHist && !esCuando && !(esCuanto && (conValor || /cuantas? veces|cuant[oa]s (fumig|abon|pod|rieg|labor|plaga|registro|cosecha|siembr)/.test(t)))) return null;
-
-  let op = 'lista';
-  if (/\bprimera vez\b|\bprimer[oa]?\b/.test(t)) op = 'primero';
-  else if (esCuando || /\bultima vez\b|\bultim[oa]\b|\bhace cuanto\b|\b(cuesta|vale|precio)\b/.test(t)) op = 'ultimo';
-  else if (/cuantas veces/.test(t) || (/\bcuant[oa]s\b/.test(t) && !/cuant[oa]s (kilos|pesos|millones)/.test(t))) op = 'contar';
-  else if (esCuanto || /\btotal\b/.test(t)) op = conValor ? 'total' : 'contar';
-
-  const lote = _lote(t);
-  if (lote && tabla === 'gasto_total') tabla = 'costo_lote';
-  const quitarLote = lote ? new Set([_normTxt(lote.codigo), ...(_normTxt(lote.codigo).match(/\d+/g)||[])]) : new Set();
-  const palabras = t.split(' ')
-    .filter(w => w.length >= 4 && !STOP_CONSULTA.has(w) && !quitarLote.has(w) && !/^\d+$/.test(w) && !MESES.includes(w) && !DIAS_SEM.includes(w))
-    .map(_raiz);
-  return { accion:'consultar', tabla, operacion: op, lote_codigo: lote?.codigo || null, palabras, desde: rango?.desde || null, hasta: rango?.hasta || null, _seguro: true };
-}
-
 /* ── REGISTROS POR SECCIÓN ── devuelve la misma propuesta que daría el agente de IA.
    _seguro=false cuando faltan datos clave: entonces se intenta con la IA (si hay cuota). */
 const RX_COMPRA = /\b(compr\w*|entr(o|aron)|lleg(o|aron)|trajeron|traje|repus\w*|reponer|ingres(o|aron)|recibi\w*)\b/;
@@ -2462,8 +2423,8 @@ const ESTADOS_LOTE = { planificacion:'planificación', siembra:'siembra', sembra
 function interpretarLocal(dominio, texto){
   const t = _txt(texto);                              // mismo largo que el texto original (para _quitar)
   if (!t.trim()) return null;
-  const q = consultaLocal(texto);
-  if (q) return q;
+  const inf = entenderInforme(texto);                 // pedidos de informes y preguntas sobre registros
+  if (inf) return inf;
   if (_pareceAPregunta(texto)) return null;          // consejos y preguntas abiertas: eso sí es para la IA
   const hoy = hoyISO();
 
@@ -2573,7 +2534,7 @@ function respuestaMapas(texto){
 const IA = { pausaHasta: 0 };
 const MSG_SIN_IA = `La IA no está disponible ahora (sin cuota o sin internet), pero sin ella igual puedo:
 • Registrar labores, gastos, ventas, jornales, cosechas, tareas y movimientos de bodega. Ej: «ayer fumigué el lote 2 con 200 cc de mancozeb», «pagué 2 jornales a Pedro a 70 mil», «entraron 3 bultos de urea por 240 mil».
-• Responder cuándo, cuánto y cuántas veces. Ej: «¿cuándo fue la última fumigación del L1?», «¿cuánto gastamos este mes?».`;
+• Hacer informes y responder cuándo, cuánto y cuántas veces. Ej: «dame las fechas de fumigación», «lista de compras de este mes», «inventario de fungicidas», «gastos del mes por categoría», «¿cuánto lannate se ha aplicado?».`;
 function iaDisponible(){ return S.isOnline && Date.now() > IA.pausaHasta; }
 /* Todas las llamadas a Gemini pasan por aquí: sin "pensamiento" extra (gasta tokens sin necesidad) */
 async function llamarGemini(req){
@@ -2586,6 +2547,369 @@ async function llamarGemini(req){
   if (!res.ok) return { ok:false, status: res.status };
   return { ok:true, status: res.status, data: await res.json() };
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   INFORMES: EL CEREBRO LÓGICO DE LA APP (SIN IA)
+   Entiende pedidos como "dame las fechas de fumigación", "lista de
+   insumos en bodega" o "compras de este mes por categoría", y arma el
+   listado completo con totales a partir de TODOS los registros.
+   ═══════════════════════════════════════════════════════════════ */
+const RX_PIDE = /^(y\s+)?(por favor\s+)?(dame|dime|damelo|muestrame|muestra|mostrar|mostrame|ensename|quiero (ver|saber|el|la|los|las|un|una)|necesito (ver|saber|el|la|los|las|un|una)|ver (el|la|los|las)|cuales|que|cual|cuando|cuanto|cuanta|cuantos|cuantas|hace cuanto|en que fechas?|fechas?|todas las|todos los|lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|consulta)\b/;
+const RX_TEMAS = '(insumos|productos|compras|gastos|jornales|cosechas|fumigaciones|fertilizaciones|abonadas|podas|riegos|labores|tareas|ventas|ingresos|aplicaciones|inventario|plagas|lotes|salidas|consumos)';
+const RX_FUERTE = new RegExp('\\b(lista|listado|listar|informe|reporte|resumen|historial|inventario|ultima vez|primera vez|hace cuanto|cuantas veces)\\b|\\b' + RX_TEMAS +
+  '\\b.*\\b(este mes|esta semana|del mes|mes pasado|semana pasada|este ano|ano pasado|por (lote|mes|categoria|producto|trabajador)|' + MESES.join('|') + ')\\b');
+const RX_EMPIEZA_TEMA = new RegExp('^(y\\s+)?(las|los|el|la)?\\s*' + RX_TEMAS + '\\b');
+const RX_LISTA = /\b(lista|listado|listar|informe|reporte|resumen|historial|relacion|detalle|detallado|dame|muestrame|muestra|mostrar|ensename|fechas|todas|todos|cuales)\b/;
+const STOP_INFORME = new Set([...STOP_CONSULTA, ...('dame dime damelo muestrame muestra mostrar mostrame ensename quiero necesito ver saber lista listado listar informe reporte resumen ' +
+  'historial relacion detalle detallado consulta fechas fecha favor porfa inventario bodega stock existencia existencias insumos insumo productos producto ' +
+  'compras compra compro compraron comprados compradas aplicado aplicados aplicadas usado usados echado tareas tarea pendientes pendiente completadas completada ' +
+  'hechas hecha terminadas cosechas lotes cultivos cultivo gastos ingresos ventas plagas jornales trabajador trabajadores agotados agotado vencer vencidos ' +
+  'categoria categorias meses proveedor salidas salida consumos consumo bitacora actividades actividad trabajos tengo tenemos quedan queda estan esta ' +
+  'activas activa todas todos desde hasta entre partir cuales cual acabando acaban acabado reponer faltan falta poco').split(' ')]);
+
+/* Categoría o subcategoría de bodega mencionada ("fungicidas", "abonos"…) */
+const CAT_PALABRAS = [
+  [/fungicid/, { sub:'Fungicidas' }], [/insecticid/, { sub:'Insecticidas' }], [/herbicid|matamaleza/, { sub:'Herbicidas' }],
+  [/acaricid/, { sub:'Acaricidas' }], [/coadyuv|adherent/, { sub:'Coadyuvantes' }], [/foliar/, { sub:'Líquidos / Foliares' }],
+  [/bioestimul/, { sub:'Bioestimulantes' }], [/organic/, { sub:'Orgánicos' }], [/\briego\b/, { sub:'Sistema de Riego' }],
+  [/abono|fertiliz|nutric/, { cat:'Nutrición' }], [/agroquimic|veneno|plaguicid/, { cat:'Agroquímicos' }],
+  [/herramient|equipo/, { cat:'Equipos y Herramientas' }], [/\bepp\b|proteccion|dotacion/, { cat:'EPP' }], [/consumible|empaque/, { cat:'Insumos Consumibles' }],
+];
+function _categoriaPedida(t){ for (const [rx, c] of CAT_PALABRAS) if (rx.test(t)) return c; return null; }
+/* Insumo de bodega al que corresponde una compra ("Lannate (reposición: 1.000 CC)" → Lannate) */
+function _itemDeConcepto(concepto){
+  const c = _normTxt(String(concepto||'').replace(/\(.*$/, '')).trim(); if (!c) return null;
+  const inv = S.cache.inventory || [];
+  return inv.find(i => _normTxt(i.descripcion).trim() === c) || inv.find(i => { const d = _normTxt(i.descripcion).trim(); return d.length >= 4 && (c.includes(d) || d.includes(c)); }) || null;
+}
+
+/* Productos y dosis escritos en una labor: "Se fumigó con: trionex 100cc, lannate 150cc para 100 lts de agua" */
+function productosDeLabor(texto){
+  const t = String(texto||'');
+  const m = t.match(/\bcon\s*:?\s*(.+?)(?:\s+para\s+[\d.,]+\s*(?:lts?|litros?|l)\b.*)?$/i);
+  if (!m) return [];
+  const out = [];
+  m[1].split(/\s*,\s*|\s+y\s+/).forEach(seg => {
+    const s = seg.trim().replace(/\.$/, '');
+    const p = s.match(/^(.+?)\s*(\d+(?:[.,]\d+)*)\s*(cc|ml|grs?|g|gramos?|kgs?|kilos?|lts?|litros?|l|unidades?|und)?$/i);
+    if (!p) return;
+    const nombre = p[1].replace(/[:\-]+$/, '').trim(); if (!nombre || /^\d/.test(nombre)) return;
+    let cant = _numero(p[2]), uni = (p[3]||'').toLowerCase();
+    if (/^(ml|cc)$/.test(uni)) uni = 'cc';
+    else if (/^(g|grs?|gramos?)$/.test(uni)) uni = 'g';
+    else if (/^(kgs?|kilos?)$/.test(uni)){ uni = 'g'; cant *= 1000; }
+    else if (/^(lts?|litros?|l)$/.test(uni)){ uni = 'cc'; cant *= 1000; }
+    else if (/^(unidades?|und)$/.test(uni)) uni = 'unidad';
+    out.push({ nombre: nombre[0].toUpperCase() + nombre.slice(1), clave: _normTxt(nombre).trim(), cantidad: cant, unidad: uni });
+  });
+  return out;
+}
+function _fmtCant(v, u){
+  if (u === 'cc' && v >= 1000) return `${(Math.round(v/100)/10).toLocaleString('es-CO')} L`;
+  if (u === 'g'  && v >= 1000) return `${(Math.round(v/100)/10).toLocaleString('es-CO')} kg`;
+  return `${(Math.round(v*100)/100).toLocaleString('es-CO')}${u ? ' ' + u : ''}`;
+}
+function _nombresAplicados(){ const s = new Set(); (S.cache.activities||[]).forEach(b => productosDeLabor(b.actividad).forEach(p => s.add(p.clave))); return s; }
+function _fechaCorta(d){ const s = fechaDia(d); if (!s) return '—'; const f = fmtFecha(s); return s.slice(0,4) === fechaLocalISO().slice(0,4) ? f : `${f} ${s.slice(0,4)}`; }
+function _mesDe(d){ const s = fechaDia(d); if (!s) return 'Sin fecha'; const n = new Date(s.slice(0,7) + '-15T12:00:00Z').toLocaleDateString('es-CO', { month:'long', year:'numeric', timeZone:'UTC' }); return n[0].toUpperCase() + n.slice(1); }
+const _codLote = id => (S.cache.lotes||[]).find(l => l.id === id)?.codigo || '';
+
+/* Rango de fechas, también "desde el 1 de septiembre", "entre el 1 y el 15 de agosto", "del mes", "septiembre" */
+function _rangoAmplio(t){
+  const hoy = fechaLocalISO(); let m;
+  if ((m = t.match(/\b(?:desde|a partir de)\s+(?:el\s+)?(.+?)(?:\s+(?:hasta|al)\s+(?:el\s+)?(.+))?$/))){
+    const a = _fecha(m[1], false), b = m[2] ? _fecha(m[2], false) : null;
+    if (a) return { desde: a.fecha, hasta: b?.fecha || hoy, i: m.index, n: m[0].length };
+  }
+  if ((m = t.match(/\bentre\s+(?:el\s+)?(.+?)\s+y\s+(?:el\s+)?(.+)$/))){
+    const b = _fecha(m[2], false); let a = _fecha(m[1], false);
+    if (!a && b && /^\d{1,2}$/.test(m[1].trim())) a = { fecha: b.fecha.slice(0,8) + m[1].trim().padStart(2,'0') };
+    if (a && b) return { desde: a.fecha < b.fecha ? a.fecha : b.fecha, hasta: a.fecha < b.fecha ? b.fecha : a.fecha, i: m.index, n: m[0].length };
+  }
+  const r = _rango(t); if (r) return r;
+  const y = +hoy.slice(0,4), mo = +hoy.slice(5,7);
+  if ((m = t.match(/\bdel mes\b/))) return { desde: hoy.slice(0,8) + '01', hasta: hoy, i: m.index, n: m[0].length };
+  if ((m = t.match(/\bde la semana\b/))){ const dow = new Date(hoy + 'T12:00:00Z').getUTCDay(); return { desde: sumarDias(hoy, -((dow + 6) % 7)), hasta: hoy, i: m.index, n: m[0].length }; }
+  if ((m = t.match(new RegExp('\\b(' + MESES.join('|') + ')\\b(?:\\s+(?:de|del)\\s+(\\d{4}))?')))){
+    const mm = MESES.indexOf(m[1]) + 1, yy = m[2] ? +m[2] : (mm > mo ? y - 1 : y);
+    return { desde: `${yy}-${String(mm).padStart(2,'0')}-01`, hasta: fechaLocalISO(new Date(Date.UTC(yy, mm, 0, 12))), i: m.index, n: m[0].length };
+  }
+  return null;
+}
+
+/* ── Fuentes del informe. Cada fila: dia, orden, lote_id, texto (para buscar), valor, kg y las columnas a mostrar ── */
+const _fila2 = (fecha, textos, loteId, extra) => ({ dia: fechaDia(fecha), orden: tsOrden(fecha), lote_id: loteId || null, texto: _normTxt(textos.filter(Boolean).join(' ')), ...extra });
+const FUENTES_INF = {
+  labores: { titulo:'Labores', unidad:null, fechas:true,
+    cols:[['fecha','Fecha'],['lote','Lote'],['labor','Labor'],['quien','Responsable']],
+    filas:() => (S.cache.activities||[]).map(b => _fila2(b.fecha, [b.actividad, b.observaciones, b.insumo_aplicado, b.maquinaria_usada, b.responsable?.nombre_corto], b.lote_id,
+      { fecha:_fechaCorta(b.fecha), lote:b.lote?.codigo || _codLote(b.lote_id) || 'Finca', labor:b.actividad || '', quien:b.responsable?.nombre_corto || '', persona:b.responsable?.nombre_corto || '' })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.labor}${f.quien ? ' (' + f.quien + ')' : ''}` },
+  aplicaciones: { titulo:'Productos aplicados', unidad:null, fechas:true, grupoDefecto:'producto',
+    cols:[['fecha','Fecha'],['lote','Lote'],['producto','Producto'],['cant','Cantidad'],['labor','Labor']],
+    filas:() => (S.cache.activities||[]).flatMap(b => productosDeLabor(b.actividad).map(p => _fila2(b.fecha, [p.nombre, (b.actividad||'').replace(/\s*con\s*:?.*$/i, '')], b.lote_id,
+      { fecha:_fechaCorta(b.fecha), lote:b.lote?.codigo || _codLote(b.lote_id) || 'Finca', producto:p.nombre, clave:p.clave, cant:_fmtCant(p.cantidad, p.unidad), cantidad:p.cantidad, uni:p.unidad, labor:(b.actividad||'').replace(/\s*con\s*:?.*$/i, '') || 'Aplicación' }))),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.producto} ${f.cant}` },
+  inventario: { titulo:'Inventario en bodega', unidad:'$', fechas:false,
+    cols:[['producto','Producto'],['categoria','Categoría'],['cant','Cantidad'],['valor','Valor']],
+    filas:() => (S.cache.inventory||[]).map(i => ({ dia:'', orden:0, lote_id:null, texto:_normTxt([i.descripcion, i.categoria, i.subcategoria, i.detalles].join(' ')),
+      producto:i.descripcion, categoria:subcatActual(i.subcategoria) || i.categoria || 'Sin categoría', cat:i.categoria, sub:subcatActual(i.subcategoria),
+      cantidad:parseFloat(i.cantidad_actual)||0, cant:`${(parseFloat(i.cantidad_actual)||0).toLocaleString('es-CO')} ${i.unidad_medida||''}`.trim(), valor:valorInv(i), item:i })),
+    linea: f => `• ${f.producto}: ${f.cant}${f.valor > 0 ? ' · ' + fmtMoney(f.valor) : ''}${f.cantidad <= 0 ? ' · AGOTADO' : ''}` },
+  compras: { titulo:'Compras', unidad:'$', fechas:true,
+    cols:[['fecha','Fecha'],['concepto','Concepto'],['categoria','Categoría'],['lote','Lote'],['valor','Valor']],
+    filas:() => (S.cache.compras||[]).filter(c => c.origen !== 'consumo').map(c => { const it = _itemDeConcepto(c.concepto);
+      return _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor, it?.subcategoria], c.lote_id,
+        { fecha:_fechaCorta(c.fecha_compra), concepto:c.concepto || '', categoria:c.categoria || 'otro', cat:it?.categoria || c.categoria, sub:subcatActual(it?.subcategoria), lote:_codLote(c.lote_id), valor:_num(c.valor_total) }); }),
+    linea: f => `• ${f.fecha} · ${f.concepto}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
+  salidas: { titulo:'Insumos usados (salidas de bodega)', unidad:'$', fechas:true,
+    cols:[['fecha','Fecha'],['concepto','Detalle'],['lote','Lote'],['valor','Costo']],
+    filas:() => (S.cache.compras||[]).filter(c => c.origen === 'consumo').map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria], c.lote_id,
+      { fecha:_fechaCorta(c.fecha_compra), concepto:(c.concepto||'').replace(/^Consumo:\s*/, ''), categoria:c.categoria || 'otro', lote:_codLote(c.lote_id) || 'Finca', valor:_num(c.valor_total) })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.concepto} · ${fmtMoney(f.valor)}` },
+  gastos: { titulo:'Gastos (compras y jornales)', unidad:'$', fechas:true,
+    cols:[['fecha','Fecha'],['concepto','Concepto'],['categoria','Categoría'],['lote','Lote'],['valor','Valor']],
+    filas:(q) => [
+      ...(S.cache.compras||[]).filter(c => c.origen !== 'consumo' || q?.lote).map(c => _fila2(c.fecha_compra, [c.concepto, c.categoria, c.proveedor], c.lote_id,
+        { fecha:_fechaCorta(c.fecha_compra), concepto:c.concepto || '', categoria:c.origen === 'consumo' ? 'insumo usado' : (c.categoria || 'otro'), cat:c.categoria, lote:_codLote(c.lote_id), valor:_num(c.valor_total) })),
+      ...(S.cache.jornales||[]).map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
+        { fecha:_fechaCorta(j.fecha), concepto:`Jornal ${j.trabajador}: ${j.dias} día(s)${j.nota ? ' · ' + j.nota : ''}`, categoria:'jornales', cat:'jornales', lote:_codLote(j.lote_id), valor:_num(j.valor_total), persona:j.trabajador })) ],
+    linea: f => `• ${f.fecha} · ${f.concepto}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
+  jornales: { titulo:'Jornales', unidad:'$', fechas:true,
+    cols:[['fecha','Fecha'],['trabajador','Trabajador'],['dias','Días'],['labor','Labor'],['lote','Lote'],['valor','Total']],
+    filas:() => (S.cache.jornales||[]).map(j => _fila2(j.fecha, [j.trabajador, j.nota, 'jornal'], j.lote_id,
+      { fecha:_fechaCorta(j.fecha), trabajador:j.trabajador || '', persona:j.trabajador || '', dias:_num(j.dias), labor:j.nota || '', lote:_codLote(j.lote_id), valor:_num(j.valor_total) })),
+    linea: f => `• ${f.fecha} · ${f.trabajador} · ${f.dias} día(s)${f.labor ? ' · ' + f.labor : ''}${f.lote ? ' · ' + f.lote : ''} · ${fmtMoney(f.valor)}` },
+  cosechas: { titulo:'Cosechas', unidad:'kg', fechas:true,
+    cols:[['fecha','Fecha'],['lote','Lote'],['kgTxt','Kilos'],['calidad','Calidad'],['obs','Notas']],
+    filas:() => (S.cache.cosechas||[]).map(c => _fila2(c.fecha_recoleccion, [c.calidad, c.observaciones, 'cosecha'], c.lote_id,
+      { fecha:_fechaCorta(c.fecha_recoleccion), lote:c.lote?.codigo || _codLote(c.lote_id), kg:_num(c.volumen_kg), kgTxt:`${_num(c.volumen_kg).toLocaleString('es-CO')} kg`, calidad:c.calidad || 'normal', obs:c.observaciones || '' })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.kgTxt} (${f.calidad})${f.obs ? ' · ' + f.obs : ''}` },
+  ingresos: { titulo:'Ingresos y ventas', unidad:'$', fechas:true, sinLote:true,
+    cols:[['fecha','Fecha'],['concepto','Concepto'],['valor','Valor']],
+    filas:() => (S.cache.ingresos||[]).map(i => _fila2(i.fecha, [i.concepto], null, { fecha:_fechaCorta(i.fecha), concepto:i.concepto || '', valor:_num(i.valor_total) })),
+    linea: f => `• ${f.fecha} · ${f.concepto} · ${fmtMoney(f.valor)}` },
+  tareas: { titulo:'Tareas', unidad:null, fechas:true,
+    cols:[['fecha','Fecha límite'],['tarea','Tarea'],['lote','Lote'],['asignado','Asignado'],['estado','Estado']],
+    filas:() => (S.cache.tasks||[]).map(t => _fila2(t.fecha_limite || t.creado_en, [t.titulo, t.asignado?.nombre_corto], t.lote_id,
+      { fecha:t.fecha_limite ? _fechaCorta(t.fecha_limite) : 'Sin fecha', tarea:t.titulo || '', lote:t.lote?.codigo || '', asignado:t.asignado?.nombre_corto || (t.asignado_a_todos ? 'Todos' : ''), persona:t.asignado?.nombre_corto || '',
+        estado:t.estado === 'pendiente' && t.fecha_limite && t.fecha_limite < fechaLocalISO() ? 'vencida' : t.estado, est:t.estado })),
+    linea: f => `• ${f.fecha} · ${f.tarea}${f.lote ? ' · ' + f.lote : ''}${f.asignado ? ' · ' + f.asignado : ''}${f.estado === 'vencida' ? ' ⚠️ vencida' : f.est === 'completada' ? ' ✓' : ''}` },
+  plagas: { titulo:'Plagas y enfermedades', unidad:null, fechas:true,
+    cols:[['fecha','Detectada'],['lote','Lote'],['plaga','Plaga'],['severidad','Severidad'],['trat','Tratamiento'],['estado','Estado']],
+    filas:() => (S.cache.plagas||[]).map(p => _fila2(p.fecha_deteccion || p.creado_en, [p.tipo, p.descripcion, p.producto_usado], p.lote_id,
+      { fecha:_fechaCorta(p.fecha_deteccion || p.creado_en), lote:p.lote?.codigo || 'Finca', plaga:p.tipo || '', severidad:p.severidad || 'leve', trat:p.producto_usado || '', estado:p.activa ? 'activa' : 'controlada', activa:!!p.activa })),
+    linea: f => `• ${f.fecha} · ${f.lote} · ${f.plaga} (${f.severidad})${f.trat ? ' · tratada con ' + f.trat : ''} · ${f.estado}` },
+  lotes: { titulo:'Lotes', unidad:'$', fechas:false,
+    cols:[['lote','Lote'],['cultivo','Cultivo'],['estado','Estado'],['siembra','Siembra'],['kgTxt','Cosechado'],['valor','Costo']],
+    filas:() => (S.cache.lotes||[]).map(l => { const kg = (S.cache.cosechas||[]).filter(c => c.lote_id === l.id).reduce((a,c) => a + _num(c.volumen_kg), 0);
+      return { dia:'', orden:0, lote_id:l.id, texto:_normTxt([l.codigo, l.cultivo, l.variedad, l.estado].join(' ')), lote:l.codigo, cultivo:[l.cultivo, l.variedad].filter(Boolean).join(' '), estado:l.estado || '',
+        siembra:l.fecha_siembra ? `${_fechaCorta(l.fecha_siembra)} (${diasDesde(l.fecha_siembra)} d)` : '—', kg, kgTxt: kg ? `${kg.toLocaleString('es-CO')} kg` : '—', valor:costoLote(l.id) }; }),
+    linea: f => `• ${f.lote} · ${f.cultivo} · ${f.estado} · siembra ${f.siembra}${f.kg ? ' · ' + f.kgTxt : ''}${f.valor ? ' · costo ' + fmtMoney(f.valor) : ''}` },
+};
+
+/* Entiende el pedido. Devuelve la especificación del informe o null (null = no es un pedido de informe) */
+function entenderInforme(texto){
+  const t0 = _txt(texto).replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t0 || RX_CONSEJO.test(t0)) return null;
+  const porTema = RX_EMPIEZA_TEMA.test(t0) && !_plata(t0) && !_cantidad(t0);   // "jornales de Gerardo", "tareas pendientes" (sin plata ni cantidades: no es un registro)
+  if (!RX_PIDE.test(t0) && !RX_FUERTE.test(t0) && !porTema) return null;
+  const rango = _rangoAmplio(t0);
+  const t = rango ? (t0.slice(0, rango.i) + ' ' + t0.slice(rango.i + rango.n)).replace(/\s+/g, ' ').trim() : t0;
+
+  let fuente = null;
+  const hayProductoAplicado = () => { const ns = _nombresAplicados(); return t.split(' ').some(w => w.length >= 4 && [...ns].some(n => n.startsWith(w) || w.startsWith(n))) || !!_producto(t); };
+  if (/\bcompr/.test(t)) fuente = 'compras';
+  else if (/\b(inventario|bodega|stock|existencias?|agotad\w*|por vencer|vencid\w*|se (esta|estan) acabando)\b/.test(t) || /\b(que|cuales) (insumos|productos) (hay|tengo|tenemos|quedan)\b/.test(t)) fuente = 'inventario';
+  else if (/\bjornal|mano de obra|\btrabajador/.test(t)) fuente = 'jornales';
+  else if (/\b(salidas?|consumos?|descontad\w*)\b/.test(t)) fuente = 'salidas';
+  else if (/\b(productos?|insumos?|dosis)\b.*\b(aplicad\w*|usad\w*|echad\w*)\b/.test(t) || (/\b(cuant[oa]|cantidad|total)\b/.test(t) && /\b(aplicad\w*|usad\w*|echad\w*|gastad\w*)\b/.test(t) && hayProductoAplicado())) fuente = 'aplicaciones';
+  else if (/cosech|produccion|produjo|\bkilos\b/.test(t)) fuente = 'cosechas';
+  else if (/\bvent|\bvend|\bingres/.test(t)) fuente = 'ingresos';
+  else if (/plaga|enfermedad/.test(t)) fuente = 'plagas';
+  else if (/\btareas?\b|\bpendientes?\b/.test(t)) fuente = 'tareas';
+  else if (/gast|egreso|\bpagos?\b|pague|plata|dinero|\bcost|invert/.test(t)) fuente = 'gastos';
+  else if (RX_LABOR.test(t) || /\b(labor|labores|bitacora|actividad|actividades|trabajos|se hizo|hicimos|hizo|hecho)\b/.test(t)) fuente = 'labores';
+  else if (/\b(lotes|cultivos)\b/.test(t)) fuente = 'lotes';
+  if (!fuente) return null;
+
+  const lista = RX_LISTA.test(t0);
+  let op = 'lista';
+  if (/\bprimera vez\b/.test(t)) op = 'primero';
+  else if (!lista && (/^(y\s+)?cuando\b|\bultima vez\b|\bhace cuanto\b|\bcuando fue\b/.test(t))) op = 'ultimo';
+  else if (!lista && (/cuantas veces/.test(t) || (/\bcuant[oa]s\b/.test(t) && !/cuant[oa]s (kilos|pesos)/.test(t)))) op = 'contar';
+  else if (!lista && /\bcuant[oa]\b|\btotal\b|\bsuma\b/.test(t)) op = 'total';
+  if (fuente === 'inventario' && op !== 'lista') op = 'lista';
+
+  const g = t.match(/\bpor (lote|lotes|mes|meses|trabajador|trabajadores|persona|categoria|categorias|producto|productos|proveedor)\b/);
+  let agrupar = g ? ({ lotes:'lote', meses:'mes', trabajadores:'persona', trabajador:'persona', categorias:'categoria', productos:'producto' }[g[1]] || g[1]) : null;
+  if (!agrupar && fuente === 'aplicaciones' && op === 'total') agrupar = 'producto';
+
+  const lote = _lote(t0);
+  const usaCategoria = ['inventario','compras','gastos'].includes(fuente);
+  const categoria = usaCategoria ? _categoriaPedida(t) : null;
+  const estadoInv = fuente !== 'inventario' ? null : /agotad|se acab|no (hay|queda)/.test(t) ? 'agotado' : /(se (esta|estan) acabando|stock bajo|poco|por reponer)/.test(t) ? 'bajo' : /vencer|vencid/.test(t) ? 'vencer' : /\b(todo|todos|completo)\b/.test(t) ? 'todo' : 'con';
+  const estadoTarea = fuente !== 'tareas' ? null : /(completad|hech|terminad|cumplid)/.test(t) ? 'completada' : /\btodas\b/.test(t) ? 'todas' : 'pendiente';
+  const estadoPlaga = fuente !== 'plagas' ? null : /activ/.test(t) ? 'activa' : /controlad/.test(t) ? 'controlada' : null;
+  const nombresTrab = [...new Set([...(S.cache.jornales||[]).map(j => j.trabajador), ...(S.cache.users||[]).map(u => u.nombre_corto)].filter(Boolean))];
+  const persona = ['jornales','gastos','labores','tareas'].includes(fuente)
+    ? (nombresTrab.find(n => { const k = _normTxt(n).trim(); return k.length >= 3 && new RegExp('\\b' + _rxEsc(k) + '\\b').test(t0); }) || null) : null;
+
+  const quitar = new Set();
+  if (lote) [_normTxt(lote.codigo), ...(_normTxt(lote.codigo).match(/[a-z0-9]+/g)||[])].forEach(w => quitar.add(w));
+  if (persona) (_normTxt(persona).match(/[a-z0-9]+/g)||[]).forEach(w => quitar.add(w));
+  const palabras = t.split(' ').filter(w => w.length >= 4 && !STOP_INFORME.has(w) && !quitar.has(w) && !/^\d+$/.test(w) && !MESES.includes(w) && !DIAS_SEM.includes(w)
+    && !(categoria && CAT_PALABRAS.some(([rx]) => rx.test(w))) && !(fuente === 'cosechas' && /^(cosech|kilo|produc)/.test(w))
+    && !(fuente === 'aplicaciones' && /^(aplic|usad|echad|gastad|cantidad|dosis)/.test(w)));
+  return { accion:'informe', fuente, op, agrupar, lote_codigo: lote?.codigo || null, persona, categoria, estadoInv, estadoTarea, estadoPlaga, palabras,
+    desde: rango?.desde || null, hasta: rango?.hasta || null, _seguro: true };
+}
+
+/* Arma el informe: filtra, ordena, agrupa y suma. Devuelve {titulo, filtro, cols, filas, total, texto} */
+function generarInforme(q){
+  const src = FUENTES_INF[q.fuente]; if (!src) return null;
+  const lote = q.lote_codigo ? resolverLote(q.lote_codigo) : null;
+  let filas = src.filas(q);
+  const notas = [];
+  if (lote && !src.sinLote) filas = filas.filter(f => f.lote_id === lote.id);
+  if (q.persona){ const p = _normTxt(q.persona); filas = filas.filter(f => _normTxt(f.persona || '').includes(p) || f.texto.includes(p)); }
+  if (q.categoria){ const c = q.categoria; filas = filas.filter(f => c.sub ? (f.sub === c.sub || f.texto.includes(_normTxt(c.sub).slice(0,6))) : (f.cat === c.cat)); }
+  if (q.estadoInv === 'con') filas = filas.filter(f => f.cantidad > 0);
+  if (q.estadoInv === 'agotado') filas = filas.filter(f => f.cantidad <= 0);
+  if (q.estadoInv === 'bajo'){ const ids = new Set(Alerts.compute().stockBajo.map(i => i.id)); filas = filas.filter(f => ids.has(f.item?.id) || f.cantidad <= 0); }
+  if (q.estadoInv === 'vencer') filas = filas.filter(f => f.item?.fecha_vencimiento && diasHasta(f.item.fecha_vencimiento) <= 30).map(f => ({ ...f, cant: f.cant + ` · vence ${_fechaCorta(f.item.fecha_vencimiento)}` }));
+  if (q.estadoTarea && q.estadoTarea !== 'todas') filas = filas.filter(f => f.est === q.estadoTarea);
+  if (q.estadoPlaga) filas = filas.filter(f => f.estado === q.estadoPlaga);
+  if (src.fechas){
+    if (q.desde) filas = filas.filter(f => f.dia && f.dia >= q.desde);
+    if (q.hasta) filas = filas.filter(f => f.dia && f.dia <= q.hasta);
+  }
+  /* Palabras: cada una debe aparecer (con sus sinónimos). Las que no aparecen en ningún registro se ignoran
+     (suelen ser palabras de relleno), salvo que sean un producto o un lote conocido. */
+  const todas = src.filas(q), conocidas = _nombresAplicados();
+  const grupos = [];
+  (q.palabras || []).forEach(w => {
+    const alts = _expandir([_raiz(w)]);
+    const existe = todas.some(f => alts.some(a => f.texto.includes(a)));
+    const esProducto = (S.cache.inventory||[]).some(i => _normTxt(i.descripcion).includes(w.slice(0,5))) || [...conocidas].some(n => n.startsWith(w.slice(0,5)));
+    if (existe || esProducto) grupos.push({ w, alts }); else notas.push(w);
+  });
+  if (grupos.length) filas = filas.filter(f => grupos.every(g => g.alts.some(a => f.texto.includes(a))));
+  if (src.fechas) filas.sort((a,b) => q.fuente === 'tareas' && q.estadoTarea === 'pendiente' ? (a.orden||9e15) - (b.orden||9e15) : b.orden - a.orden);
+  else filas.sort((a,b) => String(a.categoria||a.lote||'').localeCompare(String(b.categoria||b.lote||'')) || String(a.producto||'').localeCompare(String(b.producto||'')));
+
+  // Título y descripción del filtro
+  const temas = grupos.map(g => g.w);
+  const esFumig = q.fuente === 'labores' && temas.length && _expandir(temas).some(a => a.startsWith('fumig'));
+  let titulo = esFumig ? 'Fumigaciones' : src.titulo;
+  if (q.fuente === 'tareas') titulo = q.estadoTarea === 'completada' ? 'Tareas completadas' : q.estadoTarea === 'todas' ? 'Todas las tareas' : 'Tareas pendientes';
+  if (q.fuente === 'inventario') titulo = { agotado:'Insumos agotados', bajo:'Insumos por reponer', vencer:'Insumos por vencer', todo:'Inventario completo' }[q.estadoInv] || 'Inventario en bodega';
+  if (q.fuente === 'plagas' && q.estadoPlaga) titulo = q.estadoPlaga === 'activa' ? 'Plagas activas' : 'Plagas controladas';
+  const filtro = [
+    lote ? (/^lote\b/i.test(lote.codigo) ? lote.codigo : 'Lote ' + lote.codigo) : '', q.persona ? q.persona : '', q.categoria ? (q.categoria.sub || q.categoria.cat) : '',
+    temas.length && !esFumig ? `con "${temas.join(', ')}"` : (esFumig && temas.length > 1 ? `con "${temas.filter(w => !/^fumig/.test(w)).join(', ')}"` : ''),
+    q.desde || q.hasta ? (q.desde === q.hasta ? fmtFecha(q.desde) : `${q.desde ? fmtFecha(q.desde) : 'inicio'} → ${q.hasta ? fmtFecha(q.hasta) : 'hoy'}`) : '',
+  ].filter(Boolean).join(' · ');
+
+  const totalPlata = src.unidad === '$' ? filas.reduce((a,f) => a + (f.valor||0), 0) : 0;
+  const totalKg = q.fuente === 'cosechas' || q.fuente === 'lotes' ? filas.reduce((a,f) => a + (f.kg||0), 0) : 0;
+
+  // Agrupado: una fila por grupo con cantidad de registros y totales
+  let cols = src.cols, filasVista = filas, agrupado = null;
+  const claveGrupo = { lote: f => f.lote || _codLote(f.lote_id) || 'Finca', mes: f => _mesDe(f.dia), persona: f => f.persona || f.trabajador || f.asignado || '—',
+    categoria: f => f.categoria || f.cat || '—', producto: f => f.producto || f.concepto || '—', proveedor: f => f.proveedor || '—' }[q.agrupar];
+  if (claveGrupo){
+    const mapa = new Map();
+    filas.forEach(f => {
+      const k = q.agrupar === 'producto' && f.clave ? f.clave : claveGrupo(f);
+      const g = mapa.get(k) || { grupo: claveGrupo(f), n:0, valor:0, kg:0, cant:{}, ultima:'' };
+      g.n++; g.valor += f.valor||0; g.kg += f.kg||0; if (f.uni !== undefined) g.cant[f.uni] = (g.cant[f.uni]||0) + (f.cantidad||0);
+      if (!g.ultima || (f.dia && f.dia > g.ultima)) g.ultima = f.dia; mapa.set(k, g);
+    });
+    agrupado = [...mapa.values()].map(g => ({ ...g, cantTxt: Object.entries(g.cant).map(([u,v]) => _fmtCant(v,u)).join(' + '), ultimaTxt: g.ultima ? _fechaCorta(g.ultima) : '' }));
+    agrupado.sort((a,b) => (b.valor - a.valor) || (b.kg - a.kg) || (b.n - a.n) || String(a.grupo).localeCompare(String(b.grupo)));
+    cols = [['grupo', { lote:'Lote', mes:'Mes', persona:'Persona', categoria:'Categoría', producto:'Producto', proveedor:'Proveedor' }[q.agrupar]], ['n','Registros']];
+    if (q.fuente === 'aplicaciones') cols.push(['cantTxt','Cantidad total'], ['ultimaTxt','Última vez']);
+    if (src.unidad === '$') cols.push(['valor','Total']);
+    if (totalKg) cols.push(['kg','Kilos']);
+    filasVista = agrupado;
+  }
+
+  // Texto para el chat
+  const enc = `📋 ${titulo}${filtro ? ' · ' + filtro : ''}`;
+  const rango = filas.length > 1 && src.fechas ? ` (del ${fmtFecha(filas.reduce((m,f) => f.dia && f.dia < m ? f.dia : m, '9999'))} al ${fmtFecha(filas.reduce((m,f) => f.dia > m ? f.dia : m, ''))})` : '';
+  const pie = [totalPlata ? `Total: ${fmtMoney(totalPlata)}` : '', totalKg ? `Total cosechado: ${totalKg.toLocaleString('es-CO')} kg` : '', notas.length ? `(No tuve en cuenta: ${notas.join(', ')})` : ''].filter(Boolean).join('\n');
+  let texto;
+  if (!filas.length) texto = `${enc}\nNo encontré registros con esos filtros.${notas.length ? `\n(No tuve en cuenta: ${notas.join(', ')})` : ''}`;
+  else if (q.op === 'ultimo') texto = `${enc}\nÚltima vez: ${fmtFechaLarga(filas[0].dia)}\n${src.linea(filas[0])}\nEn total hay ${filas.length} registro(s)${rango}.`;
+  else if (q.op === 'primero') texto = `${enc}\nPrimera vez: ${fmtFechaLarga(filas[filas.length-1].dia)}\n${src.linea(filas[filas.length-1])}`;
+  else if (q.op === 'contar' && !agrupado) texto = `${enc}\n${filas.length} registro(s)${rango}.${pie ? '\n' + pie : ''}`;
+  else if (q.op === 'total' && !agrupado && (totalPlata || totalKg)) texto = `${enc}\n${totalPlata ? 'Total: ' + fmtMoney(totalPlata) : 'Total cosechado: ' + totalKg.toLocaleString('es-CO') + ' kg'} en ${filas.length} registro(s)${rango}.${notas.length ? `\n(No tuve en cuenta: ${notas.join(', ')})` : ''}\nToca «Ver informe» para ver el detalle.`;
+  else if (agrupado){
+    const lin = agrupado.map(g => `• ${g.grupo}: ${g.n} registro(s)${g.cantTxt ? ' · ' + g.cantTxt : ''}${g.valor ? ' · ' + fmtMoney(g.valor) : ''}${g.kg ? ' · ' + g.kg.toLocaleString('es-CO') + ' kg' : ''}${g.ultimaTxt && q.fuente === 'aplicaciones' ? ' · última ' + g.ultimaTxt : ''}`);
+    texto = `${enc}\n${filas.length} registro(s)${rango}, agrupados por ${cols[0][1].toLowerCase()}:\n${lin.join('\n')}${pie ? '\n' + pie : ''}`;
+  } else {
+    const MAX = 60;
+    const lin = filas.slice(0, MAX).map(src.linea).join('\n');
+    texto = `${enc}\n${filas.length} registro(s)${rango}:\n${lin}${filas.length > MAX ? `\n…y ${filas.length - MAX} más. Toca «Ver informe» para verlo completo.` : ''}${pie ? '\n' + pie : ''}`;
+  }
+  return { titulo, filtro, cols, filas: filasVista, n: filas.length, total: totalPlata, totalKg, texto, agrupado: !!agrupado };
+}
+
+/* Informe a partir de lo que escribió el usuario (null si no es un pedido de informe) */
+function informeLocal(texto){ const q = entenderInforme(texto); return q ? generarInforme(q) : null; }
+
+/* ── Vista del informe: tabla completa, copiar, compartir y descargar en CSV (abre en Excel) ── */
+function _celda(f, k){ const v = f[k]; if (k === 'valor') return v ? fmtMoney(v) : ''; if (k === 'kg') return v ? v.toLocaleString('es-CO') : ''; return v == null ? '' : String(v); }
+function _csvInforme(inf){
+  const q = s => `"${String(s).replace(/"/g, '""')}"`;
+  const filas = inf.filas.map(f => inf.cols.map(([k]) => q(k === 'valor' ? Math.round(f[k]||0) : k === 'kg' ? (f[k]||0) : (k === 'fecha' && f.dia) ? f.dia : _celda(f, k))).join(';'));
+  return '﻿' + [`${q(inf.titulo)};${q(inf.filtro||'')}`, inf.cols.map(([,l]) => q(l)).join(';'), ...filas,
+    inf.total ? `${q('TOTAL')};${q(Math.round(inf.total))}` : ''].filter(Boolean).join('\r\n');
+}
+window.abrirInforme = function(inf){
+  if (typeof inf === 'number') inf = (S.messages[inf] || {}).informe;
+  if (!inf) return;
+  const head = inf.cols.map(([,l]) => `<th>${esc(l)}</th>`).join('');
+  const body = inf.filas.map(f => `<tr>${inf.cols.map(([k]) => `<td class="${k === 'valor' || k === 'kg' || k === 'n' ? 'num' : ''}">${esc(_celda(f, k))}</td>`).join('')}</tr>`).join('');
+  const html = `<div class="modal-h"><i class="ti ti-report-analytics"></i> ${esc(inf.titulo)}</div>
+    <div class="modal-sub">${esc(inf.filtro || 'Todos los registros')} · ${inf.n} registro(s)${inf.total ? ' · <b>' + fmtMoney(inf.total) + '</b>' : ''}${inf.totalKg ? ' · <b>' + inf.totalKg.toLocaleString('es-CO') + ' kg</b>' : ''}</div>
+    <div class="inf-wrap">${inf.filas.length ? `<table class="inf-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : '<div class="text-small" style="padding:14px;text-align:center">Sin registros.</div>'}</div>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn btn-ghost" id="inf-copiar"><i class="ti ti-copy"></i> Copiar</button>
+      <button class="btn btn-ghost" id="inf-csv"><i class="ti ti-file-spreadsheet"></i> Excel</button>
+      <button class="btn btn-primary" id="inf-compartir"><i class="ti ti-share"></i> Compartir</button>
+    </div>`;
+  M._open(html);
+  document.getElementById('inf-copiar').onclick = async () => { try{ await navigator.clipboard.writeText(inf.texto); toast('Informe copiado'); }catch(e){ toast('No se pudo copiar'); } };
+  document.getElementById('inf-csv').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([_csvInforme(inf)], { type:'text/csv;charset=utf-8' }));
+    a.download = `${_normTxt(inf.titulo).replace(/[^a-z0-9]+/g, '-')}-${fechaLocalISO()}.csv`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  };
+  document.getElementById('inf-compartir').onclick = async () => {
+    if (navigator.share){ try{ await navigator.share({ title: inf.titulo, text: inf.texto }); }catch(e){} }
+    else { try{ await navigator.clipboard.writeText(inf.texto); toast('Copiado: pégalo donde quieras compartirlo'); }catch(e){} }
+  };
+};
+
+/* Botones de informes rápidos en el chat */
+const INFORMES_RAPIDOS = [
+  ['ti-spray', 'Fumigaciones del mes', 'dame las fumigaciones de este mes'],
+  ['ti-building-warehouse', 'Inventario', 'lista de insumos en bodega'],
+  ['ti-shopping-cart', 'Compras del mes', 'lista de compras de este mes'],
+  ['ti-coin', 'Gastos del mes', 'gastos de este mes por categoría'],
+  ['ti-users', 'Jornales del mes', 'jornales de este mes'],
+  ['ti-flask', 'Productos aplicados', 'productos aplicados este mes por producto'],
+  ['ti-alert-triangle', 'Por reponer', 'lista de insumos que se están acabando'],
+  ['ti-checklist', 'Tareas pendientes', 'lista de tareas pendientes'],
+];
+window.informeRapido = function(i){
+  const r = INFORMES_RAPIDOS[i]; if (!r) return;
+  const inp = document.getElementById('txt-inp'); if (!inp) return;
+  inp.value = r[2]; document.getElementById('btn-send')?.click();
+};
 
 function _lotesMini(){ return (S.cache.lotes||[]).map(l=>`${l.codigo} (${l.cultivo})`).join(', ') || 'ninguno'; }
 function _bodegaMini(){ return (S.cache.inventory||[]).map(i=>`${i.descripcion} [${i.unidad_medida||'u'}, quedan ${i.cantidad_actual}]`).join('; ') || 'vacía'; }
@@ -2819,6 +3143,7 @@ async function proponer(dominio, texto, media){
 async function atenderAgente(dominio, texto, media){
   const prop = await proponer(dominio, texto, media);
   if (!prop) return null;
+  if (prop.accion === 'informe'){ const inf = generarInforme(prop); return { texto: inf.texto, consulta:true, informe: inf }; }
   if (prop.accion === 'consultar') return { texto: consultarRegistros(prop), consulta:true };
   if (prop.accion === 'responder') return { texto: prop.texto || 'No tengo ese dato.', consulta:true };
   const v = await confirmAccion(dominio, prop);
@@ -2833,6 +3158,7 @@ async function flowAgenteSeccion(dominio, texto, media){
   const ag=AGENTES[dominio];
   const r = await atenderAgente(dominio, texto, media);
   if (!r){ return; }
+  if (r.informe){ abrirInforme(r.informe); return; }
   if (r.consulta){
     await M.confirm({title:`<i class="ti ${ag.icon}"></i> ${ag.nombre}`, body: esc(r.texto).replace(/\n/g,'<br>'), okText:'Entendido', cancelText:''});
     return;
@@ -3475,12 +3801,12 @@ function plantaPensando(){
 
 function renderChatInterface(){
   const proactive = buildProactivePanel();
-  const msgsHtml = S.messages.length ? S.messages.map(m => {
+  const msgsHtml = S.messages.length ? S.messages.map((m, idx) => {
     let mediaHtml = '';
     if (m.mediaPreview) mediaHtml = m.mediaIsVideo ? `<video src="${m.mediaPreview}" class="media-prev" controls></video>` : `<img src="${m.mediaPreview}" class="media-prev">`;
     const isUser = m.role === 'user';
     const av = isUser ? `<div class="mrow-av user">${initial(S.user?.display)}</div>` : `<div class="mrow-av"><i class="ti ti-leaf"></i></div>`;
-    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div></div></div>`;
+    return `<div class="mrow ${isUser?'u':''}">${av}<div class="bbl ${isUser?'bbl-u':'bbl-a'}">${mediaHtml}<div class="bbl-txt">${esc(m.content)}</div>${m.informe && m.informe.n ? `<button class="inf-btn" onclick="abrirInforme(${idx})"><i class="ti ti-table"></i> Ver informe${m.informe.n > 1 ? ' (' + m.informe.n + ')' : ''}</button>` : ''}</div></div>`;
   }).join('') : '';
 
   const cameraBtn = `<button class="icb" id="btn-cam" title="Abrir cámara" style="border-color:var(--bl);background:#EEF4FC"><i class="ti ti-camera" style="color:var(--bl)"></i></button>`;
@@ -3490,11 +3816,12 @@ function renderChatInterface(){
   return `<div class="chat-wrap">
     <div class="chat-msgs" id="chat-msgs">
       ${proactive}
-      ${msgsHtml || (S.loading ? '' : emptyState('ti-leaf', 'Agente Operativo', 'Pregúntame, dícta una compra o pídeme que programe una tarea.'))}
+      ${msgsHtml || (S.loading ? '' : emptyState('ti-leaf', 'Agente Operativo', 'Pídeme informes («dame las fechas de fumigación», «compras de este mes»), registra labores o programa tareas.'))}
       ${S.loading ? plantaPensando() : ''}
       <div id="chat-end"></div>
     </div>
     <div class="chat-inp">
+      <div class="inf-chips">${INFORMES_RAPIDOS.map((r, i) => `<button class="inf-chip" onclick="informeRapido(${i})"><i class="ti ${r[0]}"></i>${r[1]}</button>`).join('')}</div>
       ${mediaPreview}
       <div class="inp-row">
         ${cameraBtn}
@@ -5219,13 +5546,13 @@ function bindAppEvents(){
     // Respuesta local sin IA para consultas comunes (ahorra tokens). Solo si no hay foto.
     // Primero sin IA: respuestas rápidas, preguntas sobre registros y registros comunes.
     const local = !mediaData ? respuestaLocal(text) : null;
-    const consulta = (!mediaData && !local) ? consultaLocal(text) : null;
-    const dom = (!mediaData && !local && !consulta) ? dominioDeTexto(text) : null;
+    const informe = (!mediaData && !local) ? informeLocal(text) : null;
+    const dom = (!mediaData && !local && !informe) ? dominioDeTexto(text) : null;
     const prop = dom ? interpretarLocal(dom, text) : null;
     if (local){
       hist.push({ role:'assistant', content: local });
-    } else if (consulta){
-      hist.push({ role:'assistant', content: consultarRegistros(consulta) });
+    } else if (informe){
+      hist.push({ role:'assistant', content: informe.texto, informe });
     } else if (prop && (prop._seguro || !iaDisponible())){
       S.loading = false; render();
       const r = await atenderAgente(dom, text, null);
