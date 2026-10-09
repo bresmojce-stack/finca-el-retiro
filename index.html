@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v11.3</title>
+<title>Finca El Retiro v11.4</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -121,6 +121,12 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .bbl-a{background:var(--s);border:1px solid var(--bd);border-bottom-left-radius:5px}
 .bbl-u{background:linear-gradient(180deg,#F0F8DF,var(--gl));border:1px solid var(--gb);border-bottom-right-radius:5px}
 .bbl-txt{font-size:13.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.plata-wrap{position:relative}
+.plata-wrap .plata-signo{position:absolute;left:12px;top:0;bottom:0;display:flex;align-items:center;font-weight:700;color:var(--tx2);pointer-events:none;font-size:14px;line-height:1}
+.plata-wrap input.plata{padding-left:26px;margin-bottom:0}
+input.plata{font-feature-settings:'tnum';font-weight:600;letter-spacing:.2px}
+.plata-pista{font-size:11.5px;color:var(--g);font-weight:600;margin-top:4px;min-height:0;line-height:1.3}
+.plata-pista:empty{display:none}
 .rend-grid{display:grid !important;grid-template-columns:repeat(3,1fr);gap:6px}
 .rend-grid>div{min-width:0}
 .pleg{margin-top:10px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s);box-shadow:var(--sh-sm);overflow:hidden}
@@ -2778,15 +2784,15 @@ function camposDe(prop){
     }
     case 'entrada': return [{k:'producto',label:'Producto',type:'text',v:prop.producto||''},
       {k:'cantidad',label:'Cantidad',type:'number',v:prop.cantidad||''},{k:'unidad',label:'Unidad',type:'text',v:prop.unidad||''},
-      {k:'precio_total',label:'Precio total (opcional)',type:'number',v:prop.precio_total||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
+      {k:'precio_total',label:'Precio total (opcional)',type:'money',v:prop.precio_total||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'salida': return [{k:'producto',label:'Producto',type:'text',v:prop.producto||''},
       {k:'cantidad',label:'Cantidad',type:'number',v:prop.cantidad||''},{k:'unidad',label:'Unidad',type:'text',v:prop.unidad||''},
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
-    case 'gasto': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'number',v:prop.valor||''},
+    case 'gasto': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'money',v:prop.valor||''},
       {k:'categoria',label:'Categoría',type:'text',v:prop.categoria||'otro'},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
-    case 'ingreso': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'number',v:prop.valor||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
+    case 'ingreso': return [{k:'concepto',label:'Concepto',type:'text',v:prop.concepto||''},{k:'valor',label:'Valor',type:'money',v:prop.valor||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'jornal': return [{k:'trabajador',label:'Trabajador',type:'text',v:prop.trabajador||''},{k:'dias',label:'Días',type:'number',v:prop.dias||1},
-      {k:'valor_dia',label:'Valor por día',type:'number',v:prop.valor_dia||''},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
+      {k:'valor_dia',label:'Valor por día',type:'money',v:prop.valor_dia||''},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     case 'crear_tarea': return [{k:'titulo',label:'Tarea',type:'text',v:prop.titulo||''},{k:'fecha_limite',label:'Fecha límite',type:'date',v:prop.fecha_limite||''},{k:'asignado',label:'Asignado a',type:'select',v:prop.asignado||'todos',options:userOpts},{k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts}];
     case 'completar_tarea': return [{k:'titulo',label:'Tarea a completar',type:'text',v:prop.titulo||''}];
     case 'apunte': return [{k:'contenido',label:'Apunte para recordar',type:'text',v:prop.contenido||''}];
@@ -2797,7 +2803,7 @@ function camposDe(prop){
       return [{k:'unidad',label:'¿En qué se sacó?',type:'select',v:prop.unidad||'kg',options:EMPAQUES.map(e=>({value:e,label:e==='kg'?'Kilos sueltos':e}))},
       {k:'peso_unidad',label:'Peso de cada una (kg)',type:'number',v:prop.peso_unidad||''},
       ...lineas.slice(0, 8).flatMap((x, n) => [{k:`_c${n}_cat`,label:`Calidad ${n+1}`,type:'select',v:x.categoria||'',options:catOpts(x.categoria)},
-        {k:`_c${n}_n`,label:'Cuántas (o kilos)',type:'number',v:x.unidades||''},{k:`_c${n}_p`,label:'Precio por unidad (opcional)',type:'number',v:x.precio||''}]),
+        {k:`_c${n}_n`,label:'Cuántas (o kilos)',type:'number',v:x.unidades||''},{k:`_c${n}_p`,label:'Precio por unidad (opcional)',type:'money',v:x.precio||''}]),
       {k:'lote_codigo',label:'Lote',type:'select',v:prop.lote_codigo||'',options:lotesOpts},{k:'observaciones',label:'Observaciones',type:'text',v:prop.observaciones||''},{k:'fecha',label:'Fecha',type:'date',v:prop.fecha||hoyISO()}];
     }
     case 'crear_lote': return [{k:'codigo',label:'Código',type:'text',v:prop.codigo||''},{k:'cultivo',label:'Cultivo',type:'text',v:prop.cultivo||''},{k:'variedad',label:'Variedad',type:'text',v:prop.variedad||''}];
@@ -2813,6 +2819,7 @@ async function confirmAccion(dominio, prop){
   const fieldsHtml = campos.map((f,i)=>{
     const id='ca-'+i;
     if(f.type==='select'){ const opts=(f.options||[]).map(o=>`<option value="${esc(o.value)}" ${String(o.value)===String(f.v)?'selected':''}>${esc(o.label)}</option>`).join(''); return `<div class="modal-field"><label class="modal-label">${esc(f.label)}</label><select class="modal-select" id="${id}">${opts}</select></div>`; }
+    if(f.type==='money') return `<div class="modal-field"><label class="modal-label">${esc(f.label)}</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" inputmode="numeric" autocomplete="off" id="${id}" value="${f.v!==''&&f.v!=null?_miles(numPlata(f.v)):''}" placeholder="0"></div></div>`;
     return `<div class="modal-field"><label class="modal-label">${esc(f.label)}</label><input class="modal-input" type="${f.type==='number'?'number':f.type==='date'?'date':'text'}" id="${id}" value="${esc(f.v)}"></div>`;
   }).join('');
   const html=`<div class="modal-h"><i class="ti ${icono}"></i> ${esc(titulo)}</div>
@@ -2826,7 +2833,7 @@ async function confirmAccion(dominio, prop){
     document.getElementById('ca-cancel').onclick=()=>close(null);
     document.getElementById('ca-ok').onclick=()=>{
       const out={accion:prop.accion};
-      campos.forEach((f,i)=>{ out[f.k]=document.getElementById('ca-'+i).value; });
+      campos.forEach((f,i)=>{ const val=document.getElementById('ca-'+i).value; out[f.k]= f.type==='money' ? (val ? String(numPlata(val)) : '') : val; });
       close(out);
     };
   });
@@ -2900,6 +2907,67 @@ async function ejecutarAccion(v){
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   CAMPOS DE PLATA: formato colombiano mientras se escribe
+   1000000 → $ 1.000.000 y debajo "un millón de pesos"
+   ═══════════════════════════════════════════════════════════════ */
+/* "1.250.000" → 1250000 (acepta puntos de miles y coma decimal) */
+function numPlata(v){
+  const t = String(v ?? '').replace(/[^\d.,-]/g, '');
+  if (!t) return 0;
+  return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
+}
+function _miles(n){ return n ? Math.round(n).toLocaleString('es-CO') : ''; }
+/* Número en palabras: 1250000 → "un millón doscientos cincuenta mil" */
+function enPalabras(n){
+  n = Math.round(Math.abs(n));
+  if (n === 0) return 'cero';
+  const U = ['','un','dos','tres','cuatro','cinco','seis','siete','ocho','nueve','diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve','veinte',
+    'veintiún','veintidós','veintitrés','veinticuatro','veinticinco','veintiséis','veintisiete','veintiocho','veintinueve'];
+  const D = ['','','','treinta','cuarenta','cincuenta','sesenta','setenta','ochenta','noventa'];
+  const C = ['','ciento','doscientos','trescientos','cuatrocientos','quinientos','seiscientos','setecientos','ochocientos','novecientos'];
+  const menor1000 = x => {
+    if (x === 100) return 'cien';
+    const c = Math.floor(x / 100), r = x % 100;
+    const dec = r < 30 ? U[r] : D[Math.floor(r / 10)] + (r % 10 ? ' y ' + U[r % 10] : '');
+    return [C[c], dec].filter(Boolean).join(' ');
+  };
+  const partes = [];
+  const millones = Math.floor(n / 1e6), miles = Math.floor((n % 1e6) / 1000), resto = n % 1000;
+  if (millones) partes.push(millones === 1 ? 'un millón' : (millones >= 1000 ? enPalabras(millones) : menor1000(millones)) + ' millones');
+  if (miles) partes.push(miles === 1 ? 'mil' : menor1000(miles) + ' mil');
+  if (resto) partes.push(menor1000(resto));
+  return partes.join(' ');
+}
+function _pistaPlata(n){
+  if (!n) return '';
+  const p = enPalabras(n);
+  return `${p}${/millón$|millones$/.test(p) ? ' de' : ''} pesos`;
+}
+/* Da formato a un campo de plata conservando el cursor en su sitio */
+function _formatearPlata(el){
+  const antes = el.value, pos = el.selectionStart ?? antes.length;
+  const digitosAntes = antes.slice(0, pos).replace(/\D/g, '').length;
+  const n = numPlata(antes.replace(/,\d*$/, ''));
+  const nuevo = _miles(n);
+  el.value = nuevo;
+  let i = 0, vistos = 0;
+  while (i < nuevo.length && vistos < digitosAntes){ if (/\d/.test(nuevo[i])) vistos++; i++; }
+  try{ if (document.activeElement === el) el.setSelectionRange(i, i); }catch(e){}
+  const caja = el.closest('.plata-wrap') || el;          // la pista va debajo del recuadro, no adentro
+  let pista = caja.parentElement?.querySelector(':scope > .plata-pista');
+  if (!pista && caja.parentElement){ pista = document.createElement('div'); pista.className = 'plata-pista'; caja.insertAdjacentElement('afterend', pista); }
+  if (pista) pista.textContent = n ? `$ ${nuevo} · ${_pistaPlata(n)}` : '';
+}
+/* Funciona en todos los formularios: cualquier campo con clase "plata" */
+document.addEventListener('input', (e) => { if (e.target?.classList?.contains('plata')) _formatearPlata(e.target); }, true);
+new MutationObserver(muts => {
+  muts.forEach(m => m.addedNodes.forEach(nodo => {
+    if (nodo.nodeType !== 1) return;
+    (nodo.matches?.('input.plata') ? [nodo] : [...nodo.querySelectorAll?.('input.plata') || []]).forEach(el => { if (!el.dataset.plataOk){ el.dataset.plataOk = '1'; if (el.value) _formatearPlata(el); } });
+  }));
+}).observe(document.documentElement, { childList:true, subtree:true });
+
+/* ═══════════════════════════════════════════════════════════════
    SISTEMA DE MODALES (M)
    ═══════════════════════════════════════════════════════════════ */
 const M = {
@@ -2961,6 +3029,9 @@ const M = {
       if (f.type === 'textarea'){
         return `<div class="modal-field" ${f.conditional?`data-show-if="${f.conditional}"`:''}><label class="modal-label">${f.label}</label><textarea class="modal-input modal-textarea" id="${id}" data-name="${f.name}" placeholder="${f.placeholder||''}">${f.initial||''}</textarea></div>`;
       }
+      if (f.type === 'money'){
+        return `<div class="modal-field" ${f.conditional?`data-show-if="${f.conditional}"`:''}><label class="modal-label">${f.label}</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" inputmode="numeric" autocomplete="off" id="${id}" data-name="${f.name}" placeholder="${f.placeholder||'0'}" value="${f.initial!=null && f.initial!=='' ? _miles(numPlata(f.initial)) : ''}"></div></div>`;
+      }
       const inputType = f.type === 'number' ? 'number' : (f.type === 'date' ? 'date' : 'text');
       return `<div class="modal-field" ${f.conditional?`data-show-if="${f.conditional}"`:''}><label class="modal-label">${f.label}</label><input class="modal-input" type="${inputType}" id="${id}" data-name="${f.name}" placeholder="${f.placeholder||''}" value="${f.initial||''}"></div>`;
     }).join('');
@@ -2993,7 +3064,7 @@ const M = {
           if (!el || (el.closest('.modal-field')?.style.display === 'none')) return;
           const v = el.value.trim();
           if (f.required && !v) invalid = f.label;
-          result[f.name] = v;
+          result[f.name] = (f.type === 'money') ? (v ? String(numPlata(v)) : '') : v;
         }
       });
       if (invalid){ toast(`Falta: ${invalid}`); return; }
@@ -4248,7 +4319,7 @@ window.flowEditInventory = async function(id){
     <div class="spec-box" style="margin-bottom:12px;background:#EEF4FC;border-color:#C5DAF2">
       <div style="font-weight:700;color:#185FA5;margin-bottom:6px;font-size:11px"><i class="ti ti-coin"></i> PRECIO — escribe lo que pagaste y la cantidad, la app calcula el costo</div>
       <div style="display:flex;gap:8px">
-        <div style="flex:1"><label class="modal-label" style="margin-bottom:3px">Precio total</label><input class="modal-input" type="number" id="f-ptot" inputmode="decimal" placeholder="Ej: 40000"></div>
+        <div style="flex:1"><label class="modal-label" style="margin-bottom:3px">Precio total</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" autocomplete="off" id="f-ptot" inputmode="numeric" placeholder="Ej: 40.000"></div></div>
         <div style="flex:.9"><label class="modal-label" style="margin-bottom:3px">Cantidad</label><input class="modal-input" type="number" id="f-pcan" inputmode="decimal" placeholder="Ej: 1"></div>
         <div style="flex:.9"><label class="modal-label" style="margin-bottom:3px">Unidad</label><select class="modal-select" id="f-puc"></select></div>
       </div>
@@ -4278,7 +4349,7 @@ window.flowEditInventory = async function(id){
     const gp = (x)=>document.getElementById(x);
     const calcP = () => {
       const baseU = gp('f-uni').value || baseU0;
-      const tot=parseFloat(gp('f-ptot').value)||0, can=parseFloat(gp('f-pcan').value)||0, uc=gp('f-puc').value, bk=parseFloat(gp('f-pbk').value)||0;
+      const tot=numPlata(gp('f-ptot').value)||0, can=parseFloat(gp('f-pcan').value)||0, uc=gp('f-puc').value, bk=parseFloat(gp('f-pbk').value)||0;
       gp('f-pbk-wrap').style.display = normUnidad(uc)==='bulto'?'':'none';
       if (tot>0 && can>0){
         let cb = convertirUnidad(can, uc, baseU, bk); if (cb===null) cb=can;
@@ -4304,7 +4375,7 @@ window.flowEditInventory = async function(id){
       };
       if (!changes.descripcion) { toast('Falta el nombre'); return; }
       // Precio (si lo escribió): calcular costo unitario con conversión
-      const ptot=parseFloat(document.getElementById('f-ptot').value)||0, pcan=parseFloat(document.getElementById('f-pcan').value)||0, puc=document.getElementById('f-puc').value, pbk=parseFloat(document.getElementById('f-pbk').value)||0;
+      const ptot=numPlata(document.getElementById('f-ptot').value)||0, pcan=parseFloat(document.getElementById('f-pcan').value)||0, puc=document.getElementById('f-puc').value, pbk=parseFloat(document.getElementById('f-pbk').value)||0;
       if (ptot>0 && pcan>0){
         if (normUnidad(puc)==='bulto' && pbk<=0){ toast('Indica los kg del bulto'); return; }
         let cb = convertirUnidad(pcan, puc, changes.unidad_medida||'unidad', pbk); if (cb===null) cb=pcan;
@@ -4336,7 +4407,7 @@ window.flowSetPrecio = async function(id){
     <div class="modal-h">Precio de "${esc(item.descripcion)}"</div>
     <div class="modal-sub">Escribe lo que pagaste y cuánto compraste. La app calcula el costo por ${esc(base)} (convirtiendo la unidad si hace falta).</div>
     ${actual>0?`<div class="spec-box" style="margin-bottom:12px">Precio actual: <b>${fmtMoney(actual)}/${esc(base)}</b></div>`:''}
-    <div class="modal-field"><label class="modal-label">Precio total pagado</label><input class="modal-input" type="number" id="p-tot" inputmode="decimal" placeholder="Ej: 40000"></div>
+    <div class="modal-field"><label class="modal-label">Precio total pagado</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" autocomplete="off" id="p-tot" inputmode="numeric" placeholder="Ej: 40.000"></div></div>
     <div style="display:flex;gap:10px">
       <div class="modal-field" style="flex:1.2"><label class="modal-label">Cantidad comprada</label><input class="modal-input" type="number" id="p-can" inputmode="decimal" placeholder="Ej: 1"></div>
       <div class="modal-field" style="flex:1"><label class="modal-label">Unidad</label><select class="modal-select" id="p-uc">${uOpts}</select></div>
@@ -4350,7 +4421,7 @@ window.flowSetPrecio = async function(id){
     document.getElementById('modal-host').innerHTML = `<div class="modal-overlay" id="m-ov"><div class="modal-sheet"><div class="modal-handle"></div>${html}</div></div>`;
     const g = (x)=>document.getElementById(x);
     const calc = () => {
-      const tot = parseFloat(g('p-tot').value)||0, can = parseFloat(g('p-can').value)||0, uc = g('p-uc').value, bk = parseFloat(g('p-bk').value)||0;
+      const tot = numPlata(g('p-tot').value)||0, can = parseFloat(g('p-can').value)||0, uc = g('p-uc').value, bk = parseFloat(g('p-bk').value)||0;
       g('p-bk-wrap').style.display = normUnidad(uc)==='bulto' ? '' : 'none';
       const prev = g('p-prev');
       if (tot>0 && can>0){
@@ -4367,7 +4438,7 @@ window.flowSetPrecio = async function(id){
     g('p-cancel').onclick = () => close(null);
     g('p-conv').onclick = () => { close(null); setTimeout(()=>flowConvertirUnidades(),150); };
     g('p-ok').onclick = () => {
-      const tot = parseFloat(g('p-tot').value)||0, can = parseFloat(g('p-can').value)||0, uc = g('p-uc').value, bk = parseFloat(g('p-bk').value)||0;
+      const tot = numPlata(g('p-tot').value)||0, can = parseFloat(g('p-can').value)||0, uc = g('p-uc').value, bk = parseFloat(g('p-bk').value)||0;
       if (tot<=0 || can<=0){ toast('Escribe el precio total y la cantidad'); return; }
       if (normUnidad(uc)==='bulto' && bk<=0){ toast('Indica cuántos kg trae el bulto'); return; }
       let cantBase = convertirUnidad(can, uc, base, bk);
@@ -4427,7 +4498,7 @@ window.flowRestockInventory = async function(id, name, unit){
       <div class="modal-field" style="flex:1"><label class="modal-label">Unidad</label><select class="modal-select" id="r-uc">${uOpts}</select></div>
     </div>
     <div class="modal-field" id="r-bk-wrap" style="display:none"><label class="modal-label">¿Cuántos kg trae el bulto?</label><input class="modal-input" type="number" id="r-bk" placeholder="Ej: 50"></div>
-    <div class="modal-field"><label class="modal-label">Precio total pagado (opcional)</label><input class="modal-input" type="number" id="r-pre" inputmode="decimal" placeholder="Lo que pagaste por esta compra"></div>
+    <div class="modal-field"><label class="modal-label">Precio total pagado (opcional)</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" autocomplete="off" id="r-pre" inputmode="numeric" placeholder="Lo que pagaste por esta compra"></div></div>
     <div class="modal-field"><label class="modal-label">Fecha de la compra</label><input class="modal-input" type="date" id="r-fec" value="${hoyISO()}"></div>
     <div id="r-prev" class="ficha-box" style="display:none"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="r-cancel">Cancelar</button><button class="btn btn-primary" id="r-ok">Reponer</button></div>`;
@@ -4436,7 +4507,7 @@ window.flowRestockInventory = async function(id, name, unit){
     document.getElementById('modal-host').innerHTML = `<div class="modal-overlay" id="m-ov"><div class="modal-sheet"><div class="modal-handle"></div>${html}</div></div>`;
     const g = (x)=>document.getElementById(x);
     const calc = () => {
-      const can=parseFloat(g('r-can').value)||0, uc=g('r-uc').value, pre=parseFloat(g('r-pre').value)||0, bk=parseFloat(g('r-bk').value)||0;
+      const can=parseFloat(g('r-can').value)||0, uc=g('r-uc').value, pre=numPlata(g('r-pre').value)||0, bk=parseFloat(g('r-bk').value)||0;
       g('r-bk-wrap').style.display = normUnidad(uc)==='bulto'?'':'none';
       let cb = convertirUnidad(can, uc, base, bk); if (cb===null) cb=can;
       const prev = g('r-prev');
@@ -4452,7 +4523,7 @@ window.flowRestockInventory = async function(id, name, unit){
     document.querySelector('#m-ov').addEventListener('click', e=>{ if(e.target===e.currentTarget) close(null); });
     g('r-cancel').onclick = () => close(null);
     g('r-ok').onclick = () => {
-      const can=parseFloat(g('r-can').value)||0, uc=g('r-uc').value, pre=parseFloat(g('r-pre').value)||0, bk=parseFloat(g('r-bk').value)||0, fec=g('r-fec').value;
+      const can=parseFloat(g('r-can').value)||0, uc=g('r-uc').value, pre=numPlata(g('r-pre').value)||0, bk=parseFloat(g('r-bk').value)||0, fec=g('r-fec').value;
       if (can<=0){ toast('Escribe la cantidad'); return; }
       if (normUnidad(uc)==='bulto' && bk<=0){ toast('Indica los kg del bulto'); return; }
       let cb = convertirUnidad(can, uc, base, bk); if (cb===null) cb=can;
@@ -4558,7 +4629,7 @@ window.flowEditGasto = async function(id, concepto, valor, categoria){
     title:'Editar gasto', okText:'Guardar cambios',
     fields:[
       { name:'concepto', label:'¿En qué se gastó?', type:'text', required:true, initial: concepto },
-      { name:'valor', label:'Valor total', type:'number', required:true, initial: String(valor) },
+      { name:'valor', label:'Valor total', type:'money', required:true, initial: String(valor) },
       { name:'categoria', label:'Categoría', type:'select', options: catOpts, initial: categoria },
       { name:'fecha', label:'Fecha del gasto', type:'date', initial: toDateInput(g?.fecha_compra) }
     ]
@@ -4581,7 +4652,7 @@ window.flowEditIngreso = async function(id, concepto, valor){
     title:'Editar ingreso', okText:'Guardar cambios',
     fields:[
       { name:'concepto', label:'¿Qué se vendió?', type:'text', required:true, initial: concepto },
-      { name:'valor', label:'Valor total', type:'number', required:true, initial: String(valor) },
+      { name:'valor', label:'Valor total', type:'money', required:true, initial: String(valor) },
       { name:'fecha', label:'Fecha del ingreso', type:'date', initial: toDateInput(ing?.fecha) }
     ]
   });
@@ -4621,7 +4692,7 @@ async function flowAddGasto(){
     title: 'Registrar gasto', okText: 'Guardar',
     fields: [
       { name:'concepto', label:'¿En qué se gastó?', type:'text', placeholder:'Ej: Jornales, Abono...', required:true },
-      { name:'valor', label:'Valor total', type:'number', required:true },
+      { name:'valor', label:'Valor total', type:'money', required:true },
       { name:'categoria', label:'Categoría del gasto', type:'select', options:[
         { value:'Agroquímicos', label:'Agroquímicos' },
         { value:'Nutrición', label:'Abonos (Nutrición)' },
@@ -4641,7 +4712,7 @@ async function flowAddGasto(){
 }
 
 async function flowAddIngreso(){
-  const r = await M.form({ title: 'Registrar ingreso', okText: 'Guardar', fields: [ { name:'concepto', label:'¿Qué se vendió?', type:'text', required:true }, { name:'valor', label:'Valor total', type:'number', required:true }, { name:'fecha', label:'Fecha del ingreso', type:'date', initial: hoyISO() } ] });
+  const r = await M.form({ title: 'Registrar ingreso', okText: 'Guardar', fields: [ { name:'concepto', label:'¿Qué se vendió?', type:'text', required:true }, { name:'valor', label:'Valor total', type:'money', required:true }, { name:'fecha', label:'Fecha del ingreso', type:'date', initial: hoyISO() } ] });
   if (!r) return;
   const resp = await HANDLERS.add_ingreso({ concepto:r.concepto, valor_total: r.valor, fecha: r.fecha || null });
   toast(resp.msg); render();
@@ -4667,7 +4738,7 @@ async function flowNewInsumo(preCat = null, prefill = null){
       <div class="modal-field" style="flex:1"><label class="modal-label">Unidad</label><input class="modal-input" id="f-uni" placeholder="Kg, L, Bulto..." value="${esc(pf.uni||'')}"></div>
     </div>
     <div style="display:flex;gap:10px">
-      <div class="modal-field" style="flex:1"><label class="modal-label">Precio total (opcional)</label><input class="modal-input" type="number" id="f-pre" placeholder="Lo que costó" value="${esc(pf.pre||'')}"></div>
+      <div class="modal-field" style="flex:1"><label class="modal-label">Precio total (opcional)</label><div class="plata-wrap"><span class="plata-signo">$</span><input class="modal-input plata" type="text" autocomplete="off" inputmode="numeric" id="f-pre" placeholder="Lo que costó" value="${esc(pf.pre||'')}"></div></div>
       <div class="modal-field" style="flex:1"><label class="modal-label">Vence (opcional)</label><input class="modal-input" type="date" id="f-ven" value="${esc(pf.ven||'')}"></div>
     </div>
     <div class="modal-field"><label class="modal-label">Franja toxicológica (opcional)</label><select class="modal-select" id="f-fra">
@@ -4689,7 +4760,7 @@ async function flowNewInsumo(preCat = null, prefill = null){
       subEl.innerHTML = subs.map(sx => `<option value="${sx}">${sx}</option>`).join('');
     };
     const gv = (id) => (document.getElementById(id)?.value || '').trim();
-    const leer = () => ({ desc:gv('f-desc'), cat:catEl.value, sub:subEl.value, det:gv('f-det'), can:gv('f-can'), uni:gv('f-uni'), pre:gv('f-pre'), ven:gv('f-ven'), fra:(document.getElementById('f-fra')?.value||'') });
+    const leer = () => ({ desc:gv('f-desc'), cat:catEl.value, sub:subEl.value, det:gv('f-det'), can:gv('f-can'), uni:gv('f-uni'), pre:(numPlata(gv('f-pre')) || ''), ven:gv('f-ven'), fra:(document.getElementById('f-fra')?.value||'') });
     const close = (val) => { document.getElementById('modal-host').innerHTML = ''; resolve(val); };
     document.getElementById('m-cancel-inv').onclick = () => close(null);
     document.getElementById('m-scan').onclick = () => close({ scan:true, keep: leer() });
@@ -4817,7 +4888,7 @@ window.flowEditJornal = async function(id){
   const r = await M.form({ title:'Editar jornal', okText:'Guardar cambios', fields:[
     { name:'trabajador', label:'Trabajador', type:'text', required:true, initial:j.trabajador },
     { name:'dias', label:'Días trabajados', type:'number', required:true, initial:String(j.dias) },
-    { name:'valor_dia', label:'Valor por día', type:'number', required:true, initial:String(j.valor_dia) },
+    { name:'valor_dia', label:'Valor por día', type:'money', required:true, initial:String(j.valor_dia) },
     { name:'lote', label:'Lote', type:'select', options:loteOpts, initial:j.lote_id?String(j.lote_id):'' },
     { name:'nota', label:'Nota', type:'text', initial:j.nota||'' },
     { name:'fecha', label:'Fecha del jornal', type:'date', initial: toDateInput(j.fecha) }
@@ -4854,7 +4925,7 @@ window.flowEditConsumo = async function(id){
   const c = S.cache.compras.find(x => x.id == id); if (!c) return;
   const r = await M.form({ title:'Editar consumo', sub:'Corrige el concepto o el costo de este consumo. Afecta el costo del lote.', okText:'Guardar cambios', fields:[
     { name:'concepto', label:'Concepto', type:'text', required:true, initial:c.concepto },
-    { name:'valor', label:'Costo', type:'number', required:true, initial:String(c.valor_total) }
+    { name:'valor', label:'Costo', type:'money', required:true, initial:String(c.valor_total) }
   ]});
   if (!r) return;
   const resp = await HANDLERS.edit_consumo(id, { concepto:r.concepto, valor_total:parseFloat(r.valor) });
@@ -4885,7 +4956,7 @@ function _camposCosecha(l, c = {}){
     { name:'peso_unidad', label:'Peso de cada una (kg) · no aplica para kilos sueltos', type:'number', initial: peso ? String(peso) : '', placeholder:'Ej: 22' },
     { name:'calidad', label:'Calidad / categoría', type:'select', options: _opcionesCategoria(l, c.calidad), initial: c.calidad ? _catCanon(l, c.calidad) : categoriasLote(l)[0] },
     { name:'nueva_categoria', label:'¿Categoría nueva? Escríbela aquí (si no, déjalo vacío)', type:'text', placeholder:'Ej: Extra, Tercera, Riche' },
-    { name:'precio_unidad', label:`Precio de venta por ${unidad === 'kg' ? 'kilo' : unidad} (opcional)`, type:'number', initial: c.precio_unidad ? String(c.precio_unidad) : '', placeholder: _pistaPrecios(l) || 'Ej: 80000' },
+    { name:'precio_unidad', label:`Precio de venta por ${unidad === 'kg' ? 'kilo' : unidad} (opcional)`, type:'money', initial: c.precio_unidad ? String(c.precio_unidad) : '', placeholder: _pistaPrecios(l) || 'Ej: 80000' },
     { name:'observaciones', label:'Observaciones (opcional)', type:'text', initial: c.observaciones || '' },
     { name:'fecha', label:'Fecha de la cosecha', type:'date', initial: c.fecha_recoleccion ? toDateInput(c.fecha_recoleccion) : hoyISO() }
   ];
@@ -4964,7 +5035,7 @@ window.flowNuevoJornal = async function(preLote = null){
   const r = await M.form({ title:'Registrar jornal', sub:'La mano de obra queda como gasto y se suma al costo del lote elegido.', okText:'Guardar', fields:[
     { name:'trabajador', label:'Trabajador', type:'text', required:true, placeholder:'Nombre de quien trabajó' },
     { name:'dias', label:'Días trabajados', type:'number', required:true, placeholder:'Ej: 1' },
-    { name:'valor_dia', label:'Valor por día (pesos)', type:'number', required:true, placeholder:'Ej: 60000' },
+    { name:'valor_dia', label:'Valor por día (pesos)', type:'money', required:true, placeholder:'Ej: 60000' },
     { name:'lote', label:'Lote donde trabajó', type:'select', options:loteOpts, initial: preLote?String(preLote):'' },
     { name:'nota', label:'Nota (opcional)', type:'text', placeholder:'Ej: deshierbe, tutorado' }
   ]});
