@@ -7,7 +7,7 @@
  *  - Si la red falla y es una navegación, devuelve el index.html cacheado
  */
 
-const CACHE_VERSION = 'finca-retiro-v12-0';
+const CACHE_VERSION = 'finca-retiro-v12-1';
 const APP_SHELL = [
   './',
   './index.html',
