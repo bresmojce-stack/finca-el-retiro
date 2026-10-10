@@ -51,9 +51,6 @@ const obra = movs.filter(m => !m.cultivo), cultivo = movs.filter(m => m.cultivo)
 const suma = l => l.reduce((a, m) => a + m.valor, 0);
 const totalObra = suma(obra), totalCultivo = suma(cultivo), total = totalObra + totalCultivo;
 const monto = num(pr.monto), desembolsado = num(pr.desembolsado) || monto, descuento = monto - desembolsado, propios = total - desembolsado;
-const rubros = {};
-obra.forEach(m => (m.items.length ? m.items.map(x => [x.r || m.rubro, num(x.v)]) : [[m.rubro, m.valor]]).forEach(([r, v]) => rubros[r] = (rubros[r] || 0) + v));
-const rubrosOrden = Object.entries(rubros).sort((a, b) => b[1] - a[1]);
 
 /* Anexos numerados en el orden de la tabla */
 const anexos = [];
@@ -74,9 +71,9 @@ const formaPago = m => {
 const celdaSoporte = m => m.soportes.length ? m.soportes.map(s => s.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>';
 
 const filas = (lista, desde) => lista.map((m, i) => `
-  <tr class="mov"><td class="c">${desde + i}</td><td class="nw">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
-    <td>${esc(m.rubro)}</td><td>${formaPago(m)}</td><td class="n"><b>${plata(m.valor)}</b></td><td>${celdaSoporte(m)}</td></tr>
-  ${m.items.length > 1 || (m.items.length === 1 && m.items[0].c > 1) ? `<tr class="det"><td></td><td colspan="7"><table class="items">${m.items.map(x => `<tr><td class="n w1">${num(x.c).toLocaleString('es-CO')}</td><td>${esc(x.d)}</td><td class="n w2">${num(x.c) > 1 ? plata(num(x.v) / num(x.c)) + ' c/u' : ''}</td><td class="n w2">${plata(num(x.v))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
+  <tr class="mov"><td class="c">${desde + i}</td><td class="c">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
+    <td class="c">${formaPago(m)}</td><td class="n"><b>${plata(m.valor)}</b></td><td class="c">${celdaSoporte(m)}</td></tr>
+  ${m.items.length > 1 || (m.items.length === 1 && m.items[0].c > 1) ? `<tr class="det"><td></td><td colspan="6"><table class="items"><colgroup><col style="width:9%"><col><col style="width:20%"><col style="width:17%"></colgroup>${m.items.map(x => `<tr><td class="n">${num(x.c).toLocaleString('es-CO')}</td><td>${esc(x.d)}</td><td class="n">${num(x.c) > 1 ? plata(num(x.v) / num(x.c)) + ' c/u' : ''}</td><td class="n">${plata(num(x.v))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
 
 const hoy = new Date().toISOString().slice(0, 10);
 const fotosObra = (CFG.fotos_obra || []).filter(f => f.archivo);
@@ -106,12 +103,12 @@ h1{font-size:22pt;margin:0;color:#2A4F08}h2{font-size:13pt;color:#2A4F08;border-
 .portada{height:235mm;display:flex;flex-direction:column;justify-content:center;break-after:page}
 .portada .sub1{font-size:15pt;margin:6px 0 30px;color:#3B6D11}.portada table{width:auto;font-size:11pt}.portada td{border:none;padding:4px 18px 4px 0}
 table{border-collapse:collapse;width:100%}th,td{border:1px solid #c9d4bb;padding:4px 6px;vertical-align:top;text-align:left}th{background:#EAF3DE;font-size:9.5pt}
-td.n,th.n{text-align:right;white-space:nowrap}td.c{text-align:center}.nw{white-space:nowrap}
+td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}.nw{white-space:nowrap}
 .resumen td{font-size:11pt;padding:7px 10px}.resumen tr.tot td{font-weight:bold;background:#EAF3DE}
 .destacado{margin:10px 0;padding:10px 12px;border-left:4px solid #639922;background:#F4FAE6;font-size:10.5pt}
 .barra{height:10px;background:#639922;border-radius:2px}
-.gastos{font-size:9pt;table-layout:fixed}.gastos td{overflow-wrap:anywhere}.gastos tr.mov td{background:#FAFCF6}.sub{font-size:8pt;color:#5a6a4a}
-tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.5pt}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 4px}.w1{width:40px}.w2{width:90px}
+.gastos{font-size:8.8pt;table-layout:fixed}.gastos td,.gastos th{padding:4px 5px;overflow-wrap:break-word}.gastos tr.mov td{vertical-align:middle}.gastos td.n{overflow-wrap:normal}.gastos tr.mov td{background:#FAFCF6}.sub{font-size:8pt;color:#5a6a4a}
+tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.3pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px;vertical-align:top}
 .falta{color:#B07010;font-style:italic}.indice{font-size:8pt}.indice td,.indice th{padding:2px 5px}.indice td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fotos{display:flex;flex-wrap:wrap;justify-content:space-between;row-gap:12px}.fotos figure{margin:0;width:49%;break-inside:avoid;page-break-inside:avoid}.fotos img{width:100%;height:61mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
 .firma{margin-top:60px;width:70mm;border-top:1px solid #111;padding-top:5px}
@@ -149,26 +146,21 @@ tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.5pt}table.it
   : `Se ha invertido el <b>${Math.round(total / desembolsado * 1000) / 10} %</b> del dinero desembolsado.`}
   ${movs.length} gastos registrados · ${movs.filter(m => m.soportes.length).length} con soporte documental (facturas, comprobantes y transferencias en los anexos).</div>
 
-<h2>2. Inversión por rubro (construcción)</h2>
-<table><tr><th>Rubro</th><th class="n">Valor</th><th class="n">%</th><th style="width:40%"></th></tr>
-${rubrosOrden.map(([r, v]) => `<tr><td>${esc(r)}</td><td class="n">${plata(v)}</td><td class="n">${(Math.round(v / totalObra * 1000) / 10).toLocaleString('es-CO')} %</td><td><div class="barra" style="width:${Math.max(1, v / rubrosOrden[0][1] * 100)}%"></div></td></tr>`).join('')}
-<tr><th>Total construcción</th><th class="n">${plata(totalObra)}</th><th class="n">100 %</th><th></th></tr></table>
-
-<h2>3. Descripción de la obra</h2>
+<h2>2. Descripción de la obra</h2>
 ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
 ${CFG.nota_reparacion ? `<div class="destacado">${esc(CFG.nota_reparacion)}</div>` : ''}
 
-<h2>4. Detalle de gastos de la construcción (en orden de fecha)</h2>
-<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Anexo</th></tr>
+<h2>3. Detalle de gastos de la construcción (en orden de fecha)</h2>
+<table class="gastos"><colgroup><col style="width:5%"><col style="width:12%"><col style="width:16%"><col style="width:32%"><col style="width:13%"><col style="width:13%"><col style="width:9%"></colgroup><tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th class="c">Pago</th><th class="n">Valor</th><th class="c">Anexo</th></tr>
 ${filas(obra, 1)}
-<tr><th colspan="6">Total construcción</th><th class="n">${plata(totalObra)}</th><th></th></tr></table>
+<tr><th colspan="5">Total construcción</th><th class="n">${plata(totalObra)}</th><th></th></tr></table>
 
-${cultivo.length ? `<h2>5. ${esc(CFG.cultivo.titulo)}</h2>
-<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Anexo</th></tr>
+${cultivo.length ? `<h2>4. ${esc(CFG.cultivo.titulo)}</h2>
+<table class="gastos"><colgroup><col style="width:5%"><col style="width:12%"><col style="width:16%"><col style="width:32%"><col style="width:13%"><col style="width:13%"><col style="width:9%"></colgroup><tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th class="c">Pago</th><th class="n">Valor</th><th class="c">Anexo</th></tr>
 ${filas(cultivo, obra.length + 1)}
-<tr><th colspan="6">Total</th><th class="n">${plata(totalCultivo)}</th><th></th></tr></table>` : ''}
+<tr><th colspan="5">Total</th><th class="n">${plata(totalCultivo)}</th><th></th></tr></table>` : ''}
 
-${fotosObra.length ? `<h2>${cultivo.length ? 6 : 5}. Registro fotográfico de la obra</h2>
+${fotosObra.length ? `<h2>${cultivo.length ? 5 : 4}. Registro fotográfico de la obra</h2>
 <div class="fotos">${fotosObra.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 
 ${anexos.length ? `<h2 style="break-before:page">Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
