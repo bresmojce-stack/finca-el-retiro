@@ -87,5 +87,6 @@
   ],
   "firma": true,
   "foto_portada": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_13.jpg",
-  "_ayuda_fotos": "Las fotos de la obra están en la nube (bucket soportes/…/obra/). Se muestran en este orden (de la más antigua a la más reciente). Para agregar una, súbela y añade su URL aquí."
+  "_ayuda_fotos": "Las fotos de la obra están en la nube (bucket soportes/…/obra/). Se muestran en este orden (de la más antigua a la más reciente). Para agregar una, súbela y añade su URL aquí.",
+  "mostrar_fecha_informe": false
 }

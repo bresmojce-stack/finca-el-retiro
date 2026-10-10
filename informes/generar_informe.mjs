@@ -129,7 +129,7 @@ tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.5pt}table.it
     <tr><td>Crédito</td><td>${esc(CFG.credito.numero)} · ${esc(CFG.credito.linea)}</td></tr>
     <tr><td>Condiciones</td><td>${esc(CFG.credito.plazo)} · ${esc(CFG.credito.tasa)}</td></tr>
     <tr><td>Desembolso</td><td>${pr.fecha_desembolso ? fechaLarga(pr.fecha_desembolso) : '—'}</td></tr>
-    <tr><td>Fecha del informe</td><td>${fechaLarga(hoy)}</td></tr>
+    ${CFG.mostrar_fecha_informe ? `<tr><td>Fecha del informe</td><td>${fechaLarga(hoy)}</td></tr>` : ''}
   </table>
 </section>
 
@@ -175,7 +175,7 @@ ${anexos.length ? `<h2 style="break-before:page">Índice de anexos</h2><table cl
 ${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}
 
 ${CFG.firma ? `<div class="firma" style="margin-top:40px"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
-<div class="pie">Informe generado con la app Finca El Retiro el ${fechaLarga(hoy)}. Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
+<div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
 </body></html>`;
 
 /* ── Anexos: todo se vuelve imagen y se acomoda en hojas carta ──
