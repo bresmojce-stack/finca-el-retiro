@@ -3,7 +3,10 @@
   "proyecto_id": "20bf624c-f465-4156-afbc-f4b157067aaa",
   "titulo": "Informe de inversión",
   "subtitulo": "Préstamo para la construcción del invernadero",
-  "titular": { "nombre": "Brian Roberto Escobar Morales", "cedula": "1.113.524.335" },
+  "titular": {
+    "nombre": "Brian Roberto Escobar Morales",
+    "cedula": "1.113.524.335"
+  },
   "finca": "Finca El Retiro · Pradera, Valle del Cauca",
   "credito": {
     "numero": "****1371",
@@ -22,12 +25,67 @@
   "cultivo": {
     "_ayuda": "Gastos que no son de la construcción sino de la puesta en marcha del primer cultivo. Se muestran en una sección aparte.",
     "titulo": "Puesta en marcha del primer cultivo",
-    "rubros": ["Semilla y plántulas"],
+    "rubros": [
+      "Semilla y plántulas"
+    ],
     "incluir_consumos_de_bodega": true
   },
   "mostrar_recursos_propios": true,
   "fotos_obra": [
-    { "_ejemplo": "Agrega aquí las fotos de la obra: archivo (ruta local o URL) y título", "archivo": "", "titulo": "" }
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_01.jpg",
+      "titulo": "Foto 1. Inicio de la obra: columnas de guadua ancladas en el terreno."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_02.jpg",
+      "titulo": "Foto 2. Primer módulo de la estructura: columnas y vigas de guadua."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_03.jpg",
+      "titulo": "Foto 3. Columnas altas de guadua con la base protegida con inmunizante (estacón); guadua lista para instalar."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_04.jpg",
+      "titulo": "Foto 4. Vigas transversales y columnas centrales de la cumbrera."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_05.jpg",
+      "titulo": "Foto 5. Avance de la estructura: módulo lateral armado y columnas centrales."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_06.jpg",
+      "titulo": "Foto 6. Línea de columnas centrales que sostienen la cumbrera."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_07.jpg",
+      "titulo": "Foto 7. Columna central y escalera de trabajo de la cuadrilla."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_08.jpg",
+      "titulo": "Foto 8. Estructura de vigas del costado del invernadero."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_09.jpg",
+      "titulo": "Foto 9. Aplomado de columnas y guadua apilada para la siguiente etapa."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_10.jpg",
+      "titulo": "Foto 10. Estructura de vigas y columnas a lo largo de los 70 m."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_11.jpg",
+      "titulo": "Foto 11. Instalación del plástico Agroclear en los costados."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_12.jpg",
+      "titulo": "Foto 12. Cubierta lateral instalada y estructura del techo lista para el plástico."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_13.jpg",
+      "titulo": "Foto 13. El invernadero visto desde lejos, en la finca."
+    }
   ],
-  "firma": true
+  "firma": true,
+  "foto_portada": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_13.jpg",
+  "_ayuda_fotos": "Las fotos de la obra están en la nube (bucket soportes/…/obra/). Se muestran en este orden (de la más antigua a la más reciente). Para agregar una, súbela y añade su URL aquí."
 }
