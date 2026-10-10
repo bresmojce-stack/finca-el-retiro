@@ -80,13 +80,30 @@ const filas = (lista, desde) => lista.map((m, i) => `
 
 const hoy = new Date().toISOString().slice(0, 10);
 const fotosObra = (CFG.fotos_obra || []).filter(f => f.archivo);
-const fotoSrc = a => /^https?:/.test(a) ? a : 'file://' + path.resolve(AQUI, a);
+/* Achica una imagen a JPEG para que el PDF no pese tanto (usa Python + Pillow si está; si no, deja la original) */
+function achicar(buf, max = 1400) {
+  try {
+    const ent = path.join(os.tmpdir(), `img-${Math.random().toString(36).slice(2)}`), sal = ent + '.jpg';
+    fs.writeFileSync(ent, buf);
+    execFileSync('python3', ['-c', 'import sys;from PIL import Image;im=Image.open(sys.argv[1]);im.thumbnail((int(sys.argv[3]),)*2);im.convert("RGB").save(sys.argv[2],quality=78,optimize=True)', ent, sal, String(max)]);
+    return { buf: fs.readFileSync(sal), tipo: 'image/jpeg' };
+  } catch { return { buf, tipo: null }; }
+}
+/* Las fotos se incrustan en el PDF (el navegador del generador no siempre tiene acceso directo a la red) */
+const _fotos = {};
+for (const a of [CFG.foto_portada, ...fotosObra.map(f => f.archivo)].filter(Boolean)) {
+  if (_fotos[a]) continue;
+  const buf = /^https?:/.test(a) ? Buffer.from(await (await fetch(a)).arrayBuffer()) : fs.readFileSync(path.resolve(AQUI, a));
+  const ch = achicar(buf, 1600);
+  _fotos[a] = `data:${ch.tipo || (/\.png$/i.test(a) ? 'image/png' : 'image/jpeg')};base64,${ch.buf.toString('base64')}`;
+}
+const fotoSrc = a => _fotos[a] || a;
 
 const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(CFG.titulo)}</title><style>
 @page{size:Letter;margin:16mm 14mm 18mm}
 body{font-family:Arial,Helvetica,sans-serif;color:#1a1f14;font-size:10.5pt;line-height:1.4}
 h1{font-size:22pt;margin:0;color:#2A4F08}h2{font-size:13pt;color:#2A4F08;border-bottom:2px solid #639922;padding-bottom:3px;margin:22px 0 8px;break-after:avoid}
-.portada{height:230mm;display:flex;flex-direction:column;justify-content:center;break-after:page}
+.portada{height:235mm;display:flex;flex-direction:column;justify-content:center;break-after:page}
 .portada .sub1{font-size:15pt;margin:6px 0 30px;color:#3B6D11}.portada table{width:auto;font-size:11pt}.portada td{border:none;padding:4px 18px 4px 0}
 table{border-collapse:collapse;width:100%}th,td{border:1px solid #c9d4bb;padding:4px 6px;vertical-align:top;text-align:left}th{background:#EAF3DE;font-size:9.5pt}
 td.n,th.n{text-align:right;white-space:nowrap}td.c{text-align:center}.nw{white-space:nowrap}
@@ -96,13 +113,14 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c{text-align:center}.nw{white-s
 .gastos{font-size:9pt;table-layout:fixed}.gastos td{overflow-wrap:anywhere}.gastos tr.mov td{background:#FAFCF6}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.5pt}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 4px}.w1{width:40px}.w2{width:90px}
 .falta{color:#B07010;font-style:italic}
-.fotos{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:68mm;object-fit:cover;border:1px solid #ccc}.fotos figcaption{font-size:8.5pt;color:#555}
+.fotos{display:grid;grid-template-columns:1fr 1fr;gap:12px 10px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:72mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
 .firma{margin-top:60px;width:70mm;border-top:1px solid #111;padding-top:5px}
 .pie{font-size:8pt;color:#777;margin-top:16px}
 </style></head><body>
 
 <section class="portada">
   <div style="font-size:11pt;color:#5a6a4a">${esc(CFG.finca)}</div>
+  ${CFG.foto_portada ? `<img src="${esc(fotoSrc(CFG.foto_portada))}" style="width:100%;height:95mm;object-fit:cover;border-radius:4px;margin:10px 0 18px">` : ''}
   <h1>${esc(CFG.titulo)}</h1>
   <div class="sub1">${esc(CFG.subtitulo)}</div>
   <table>
@@ -141,19 +159,19 @@ ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
 ${CFG.nota_reparacion ? `<div class="destacado">${esc(CFG.nota_reparacion)}</div>` : ''}
 
 <h2>4. Detalle de gastos de la construcción (en orden de fecha)</h2>
-<table class="gastos"><colgroup><col style="width:3%"><col style="width:9%"><col style="width:14%"><col style="width:37%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
+<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
 ${filas(obra, 1)}
 <tr><th colspan="6">Total construcción</th><th class="n">${plata(totalObra)}</th><th></th></tr></table>
 
 ${cultivo.length ? `<h2>5. ${esc(CFG.cultivo.titulo)}</h2>
-<table class="gastos"><colgroup><col style="width:3%"><col style="width:9%"><col style="width:14%"><col style="width:37%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
+<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
 ${filas(cultivo, obra.length + 1)}
 <tr><th colspan="6">Total</th><th class="n">${plata(totalCultivo)}</th><th></th></tr></table>` : ''}
 
 ${fotosObra.length ? `<h2>${cultivo.length ? 6 : 5}. Registro fotográfico de la obra</h2>
 <div class="fotos">${fotosObra.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 
-${anexos.length ? `<h2>Índice de anexos</h2><table class="gastos"><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.length ? `<h2>Índice de anexos</h2><table class="gastos"><colgroup><col style="width:8%"><col style="width:46%"><col style="width:46%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
 ${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc(a.mov.concepto.slice(0, 70))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}
 
 ${CFG.firma ? `<div class="firma"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
@@ -177,7 +195,8 @@ for (const a of anexos) {
     partes.push(await pdfDeHtml(portadaAnexo(a) + '</body>', path.join(tmp, `${String(a.n).padStart(3, '0')}_a.pdf`)));
     const f = path.join(tmp, `${String(a.n).padStart(3, '0')}_b.pdf`); fs.writeFileSync(f, buf); partes.push(f);
   } else {
-    const img = `data:${a.tipo || 'image/png'};base64,${buf.toString('base64')}`;
+    const ch = achicar(buf);
+    const img = `data:${ch.tipo || a.tipo || 'image/png'};base64,${ch.buf.toString('base64')}`;
     partes.push(await pdfDeHtml(portadaAnexo(a) + `<div style="padding:0 14mm;text-align:center"><img src="${img}" style="max-width:100%;max-height:215mm;object-fit:contain;border:1px solid #ccc"></div></body>`,
       path.join(tmp, `${String(a.n).padStart(3, '0')}.pdf`)));
   }
