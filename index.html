@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.4</title>
+<title>Finca El Retiro v12.5</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -961,6 +961,7 @@ const HANDLERS = {
   add_gasto: async (i) => {
     const payload = { concepto:i.concepto, categoria:i.categoria, valor_total:i.valor_total, lote_id:i.lote_id||null, fecha_compra: i.fecha || fechaLocalISO() };
     if (i.proyecto_id){ payload.proyecto_id = i.proyecto_id; payload.rubro = i.rubro || null; }
+    else { const pr = proyectoDeLote(payload.lote_id); if (pr){ payload.proyecto_id = pr.id; payload.rubro = i.rubro || rubroDeTexto(i.concepto); } }
     if (i.proveedor) payload.proveedor = i.proveedor;
     if (i.cantidad) { payload.cantidad = i.cantidad; payload.unidad = i.unidad || null; }
     if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); return {success:true, msg:'Gasto registrado (offline)'}; }
@@ -1306,6 +1307,7 @@ const HANDLERS = {
     }
     const payload = { concepto:f.concepto, categoria:'Transporte', valor_total:f.valor_total, cantidad:f.cantidad || null, unidad:f.unidad || null, lote_id:f.lote_id || null,
       fecha_compra:f.fecha || fechaLocalISO(), proveedor:f.proveedor || null, origen:'manual', cosecha_id:f.cosecha_id || null };
+    { const pr = proyectoDeLote(payload.lote_id); payload.proyecto_id = pr?.id || null; if (pr) payload.rubro = 'Transporte'; }
     const { error } = prev ? await sb.from('compras').update(payload).eq('id', prev) : await sb.from('compras').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     return {success:true};
@@ -1313,7 +1315,7 @@ const HANDLERS = {
   registrar_jornal: async (i) => {
     if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar jornales'};
     const total = (parseFloat(i.dias)||0) * (parseFloat(i.valor_dia)||0);
-    const { error } = await sb.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null, ...(i.proyecto_id ? { proyecto_id:i.proyecto_id } : {}) });
+    const { error } = await sb.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null, ...((i.proyecto_id || proyectoDeLote(i.lote_id)?.id) ? { proyecto_id: i.proyecto_id || proyectoDeLote(i.lote_id).id } : {}) });
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     await refreshAll();
     return {success:true, msg:'Jornal registrado', total};
@@ -1410,6 +1412,7 @@ async function consumirInsumo({ itemId, cantidad, loteId = null }){
   if (costo > 0){
     const lote = loteId ? S.cache.lotes.find(l => l.id == loteId) : null;
     const payload = { concepto:`Consumo: ${usar} ${unidad} de ${descItem}`.replace('  ',' '), categoria:item.categoria||'otro', valor_total:costo, lote_id:loteId||null, origen:'consumo', fecha_compra: fechaLocalISO() };
+    { const pr = proyectoDeLote(loteId); if (pr){ payload.proyecto_id = pr.id; payload.rubro = 'Materiales'; } }
     if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); }
     else { try{ const { error } = await sb.from('compras').insert(payload); if(error) console.warn('No se pudo registrar costo:', error.message); else await refreshAll(); } catch(e){} }
   }
@@ -4025,8 +4028,10 @@ function renderCultivos(){
         const fletes = comprasL.filter(c=>c.categoria==='Transporte').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const otros = comprasL.filter(c=>c.origen!=='consumo' && c.categoria!=='Transporte').reduce((a,c)=>a+(parseFloat(c.valor_total)||0),0);
         const total = totInsumos + totJorn + otros + fletes;
-        if (total === 0 && !jornL.length) return '';
-        let h = `<div class="card" style="border-left:3px solid var(--gm)">
+        const prL = proyectoDeLote(l.id);
+        const avisoPr = prL ? `<div class="card" style="border-left:3px solid var(--bl);background:var(--p-blue)"><div class="row gap8"><i class="ti ti-building-bank" style="font-size:20px;color:var(--bl)"></i><div class="flex1"><div class="text-bold" style="font-size:13px">Los gastos de este lote van en ${esc(prL.nombre)}</div><div class="text-tiny">Invertido: ${fmtMoney(resumenProyecto(prL).invertido)} · se llevan aparte de la finca</div></div><button class="btn btn-sm btn-blue" onclick="S.tab='dinero'; abrirPrestamo('${prL.id}')">Abrir</button></div></div>` : '';
+        if (total === 0 && !jornL.length) return avisoPr;
+        let h = avisoPr + `<div class="card" style="border-left:3px solid var(--gm)">
           <div class="sec-t" style="margin:0 0 8px"><span><i class="ti ti-report-money"></i> Costo total del lote</span></div>
           <div class="inv-grid" style="grid-template-columns:repeat(${3+(otros>0)+(fletes>0)},1fr);border-top:none;padding-top:0;margin-top:0">
             <div class="inv-stat">Insumos<b style="color:var(--rd)">${fmtMoney(totInsumos)}</b></div>
@@ -4206,6 +4211,8 @@ function rubroDeTexto(t){
   if (/herramienta|pala|machete|taladro|sierra/.test(t)) return 'Herramientas';
   return 'Materiales';
 }
+/* Todo lo que se anota en el lote del préstamo (el invernadero) va a las cuentas del préstamo */
+function proyectoDeLote(loteId){ return loteId ? (S.cache.proyectos || []).find(p => p.activo !== false && p.lote_id === loteId) || null : null; }
 function proyectoPrincipal(){ return (S.cache.proyectos || []).find(p => p.activo !== false) || null; }
 /* Gastos (compras) y jornales del préstamo como movimientos comunes */
 function movimientosProyecto(p){
@@ -5462,7 +5469,7 @@ function _camposCosecha(l, c = {}){
   ];
 }
 /* ── FLETES: lo que se paga por bajar la carga (por canastilla/bulto o por toda la carga) ── */
-function fletesLote(loteId){ return comprasFinca().filter(c => c.lote_id === loteId && c.categoria === 'Transporte'); }
+function fletesLote(loteId){ return (S.cache.compras || []).filter(c => c.lote_id === loteId && c.categoria === 'Transporte'); }
 function fleteDeCosecha(id){ return (S.cache.compras || []).find(c => c.cosecha_id === id) || null; }
 function _fleteEsCarga(f){ return !f.unidad || f.unidad === 'carga' || !(parseFloat(f.cantidad) > 0); }
 /* "20 canastillas × $7.000 = $140.000" o "carga completa $300.000" */
