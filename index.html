@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.3</title>
+<title>Finca El Retiro v12.4</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -126,6 +126,11 @@ html,body{height:100%;background:var(--bg);font-family:var(--f);overscroll-behav
 .sop-chip{height:40px;min-width:40px;padding:0 10px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--rd);font-size:20px;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-family:var(--f)}
 .sop-chip.sop-add{color:var(--g);font-size:12px;font-weight:700;border-style:dashed}
 .sop-chip.sop-add i{font-size:17px}
+.fac-items{margin-top:6px}
+.fac-items summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--g);display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border:1px solid var(--gb);background:var(--gl);border-radius:999px;list-style:none}
+.fac-items summary::-webkit-details-marker{display:none}
+.fac-items[open] summary{margin-bottom:4px}
+.fac-items .inf-table td{min-width:0}
 .asig-lista{max-height:52vh;overflow:auto;border:1px solid var(--bd);border-radius:10px}
 .asig-fila{display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s3);font-size:12.5px;cursor:pointer}
 .asig-fila input{width:20px;height:20px;flex-shrink:0;accent-color:var(--g)}
@@ -4208,16 +4213,34 @@ function movimientosProyecto(p){
   const sop = S.cache.soportes || [];
   const compras = (S.cache.compras || []).filter(c => c.proyecto_id === p.id).map(c => ({
     tipo:'gasto', id:c.id, fecha:c.fecha_compra, concepto:c.concepto || '', proveedor:c.proveedor || '', rubro:c.rubro || rubroDeTexto(c.concepto), valor:_num(c.valor_total),
-    soportes: sop.filter(s => s.compra_id === c.id) }));
+    factura: c.numero_factura || '', items: itemsFactura(c), soportes: sop.filter(s => s.compra_id === c.id) }));
   const jornales = (S.cache.jornales || []).filter(j => j.proyecto_id === p.id).map(j => ({
     tipo:'jornal', id:j.id, fecha:j.fecha, concepto:`Jornal ${j.trabajador}: ${j.dias} día(s)${j.nota ? ' · ' + j.nota : ''}`, proveedor:j.trabajador || '', rubro:'Mano de obra', valor:_num(j.valor_total),
-    soportes: sop.filter(s => s.jornal_id === j.id) }));
-  return [...compras, ...jornales].sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha));
+    items: [], soportes: sop.filter(s => s.jornal_id === j.id) }));
+  return [...compras, ...jornales].sort((a,b) => tsOrden(a.fecha) - tsOrden(b.fecha));
+}
+/* Productos de una factura: [{c: cantidad, u: unidad, d: producto, v: valor total con IVA, r: rubro}] */
+function itemsFactura(c){
+  const it = Array.isArray(c?.items) ? c.items : [];
+  return it.map(x => ({ c: _num(x.c) || 1, u: x.u || '', d: String(x.d || ''), v: _num(x.v), r: x.r || rubroDeTexto(x.d) }));
+}
+/* Texto de productos para editar: "4 | Agroclear 7x8x72 | 7.248.000" por línea */
+function itemsATexto(items){ return items.map(x => `${String(x.c).replace('.', ',')} | ${x.d} | ${Math.round(x.v).toLocaleString('es-CO')}`).join('\n'); }
+function textoAItems(t){
+  return String(t || '').split(/\n+/).map(l => l.trim()).filter(Boolean).map(l => {
+    const p = l.split('|').map(x => x.trim());
+    if (p.length >= 3) return { c: parseFloat(p[0].replace(',', '.')) || 1, u:'', d: p[1], v: numPlata(p[2]), r: rubroDeTexto(p[1]) };
+    if (p.length === 2) return { c: 1, u:'', d: p[0], v: numPlata(p[1]), r: rubroDeTexto(p[0]) };
+    return null;
+  }).filter(x => x && x.d && x.v > 0);
 }
 function resumenProyecto(p){
   const movs = movimientosProyecto(p);
   const invertido = movs.reduce((a,m) => a + m.valor, 0), monto = _num(p?.monto);
-  const rubros = {}; movs.forEach(m => rubros[m.rubro] = (rubros[m.rubro] || 0) + m.valor);
+  const rubros = {}; movs.forEach(m => {
+    if (m.items.length) m.items.forEach(x => rubros[x.r] = (rubros[x.r] || 0) + x.v);
+    else rubros[m.rubro] = (rubros[m.rubro] || 0) + m.valor;
+  });
   const conSoporte = movs.filter(m => m.soportes.length).length;
   return { movs, invertido, monto, saldo: monto ? monto - invertido : null, pct: monto ? Math.min(100, Math.round(invertido / monto * 1000) / 10) : null,
     rubros: Object.entries(rubros).sort((a,b) => b[1] - a[1]), conSoporte, generales: (S.cache.soportes || []).filter(s => s.proyecto_id === p?.id && !s.compra_id && !s.jornal_id) };
@@ -4249,7 +4272,14 @@ function renderPrestamo(){
       <div class="icon-pill ${m.tipo === 'jornal' ? 'ip-brown' : 'ip-red'}" style="width:30px;height:30px;font-size:15px"><i class="ti ${m.tipo === 'jornal' ? 'ti-user' : 'ti-receipt'}"></i></div>
       <div class="mini-list-body">
         <div class="mini-list-title">${esc(m.concepto)}</div>
-        <div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(m.fecha)}</span><span>${esc(m.rubro)}</span>${m.proveedor && m.tipo === 'gasto' ? `<span>${esc(m.proveedor)}</span>` : ''}</div>
+        <div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(m.fecha)}</span>${m.items.length ? '' : `<span>${esc(m.rubro)}</span>`}${m.proveedor && m.tipo === 'gasto' ? `<span>${esc(m.proveedor)}</span>` : ''}</div>
+        ${m.items.length ? `<details class="fac-items"><summary><i class="ti ti-list-details"></i> Ver ${m.items.length} producto${m.items.length === 1 ? '' : 's'}</summary>
+          <div class="inf-wrap" style="max-height:none"><table class="inf-table"><thead><tr><th>Cant.</th><th>Producto</th><th>V. unitario</th><th>Valor</th></tr></thead><tbody>
+          ${m.items.map(x => `<tr><td class="num">${x.c.toLocaleString('es-CO')}${x.u && x.u !== 'unidad' ? ' ' + esc(x.u) + (x.c === 1 ? '' : 's') : ''}</td><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v / x.c)}</td><td class="num">${fmtMoney(x.v)}</td></tr>`).join('')}
+          <tr><td></td><td><b>Total de la factura</b></td><td></td><td class="num"><b>${fmtMoney(m.valor)}</b></td></tr>
+          </tbody></table></div>
+          ${Math.abs(m.items.reduce((a,x) => a + x.v, 0) - m.valor) > 1 ? `<div class="text-tiny" style="color:var(--yl)">⚠️ La suma de los productos (${fmtMoney(m.items.reduce((a,x) => a + x.v, 0))}) no da el total.</div>` : ''}
+        </details>` : ''}
         <div class="sop-fila">${m.soportes.map(chipSop).join('')}<button class="sop-chip sop-add" onclick="adjuntarSoporte('${m.tipo}','${m.id}')" title="Adjuntar foto o PDF"><i class="ti ti-paperclip"></i>${m.soportes.length ? '' : ' Soporte'}</button></div>
       </div>
       <div style="text-align:right;flex-shrink:0">
@@ -4279,7 +4309,7 @@ function renderPrestamo(){
       <button class="btn btn-soft flex1" onclick="asignarAlPrestamo('${p.id}')"><i class="ti ti-link"></i> Traer gastos</button>
     </div>
     ${plegable('prestamo-rubros', `<i class="ti ti-chart-pie"></i> Por rubro`, R.rubros.length ? `<div class="card" style="padding:6px 12px">${R.rubros.map(([r, v]) => `<div class="lote-cost-row"><span>${esc(r)}</span><span style="font-weight:700;font-feature-settings:'tnum'">${fmtMoney(v)} <span class="text-tiny">${R.invertido ? Math.round(v / R.invertido * 100) : 0}%</span></span></div>`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Aún no hay gastos en el préstamo.</div>`, { abierta: true, resumen: String(R.rubros.length) })}
-    ${plegable('prestamo-gastos', `<i class="ti ti-receipt"></i> Gastos del préstamo`, R.movs.length ? `<div class="card">${R.movs.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Registra gastos con «+ Gasto» o trae gastos que ya estaban anotados con «Traer gastos».</div>`, { abierta: true, resumen: fmtMoney(R.invertido) })}
+    ${plegable('prestamo-gastos', `<i class="ti ti-receipt"></i> Facturas y gastos (por fecha)`, R.movs.length ? `<div class="card">${R.movs.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Registra gastos con «+ Gasto» o trae gastos que ya estaban anotados con «Traer gastos».</div>`, { abierta: true, resumen: fmtMoney(R.invertido) })}
     ${plegable('prestamo-docs', `<i class="ti ti-files"></i> Documentos del préstamo`, `<div class="text-tiny" style="margin-bottom:6px">Pagaré, carta de aprobación, cotizaciones, fotos de la obra… (no van ligados a un gasto).</div>
       <div class="sop-fila">${R.generales.map(chipSop).join('')}<button class="sop-chip sop-add" onclick="adjuntarSoporte('proyecto','${p.id}')"><i class="ti ti-paperclip"></i> Subir</button></div>`, { resumen: String(R.generales.length) })}
     ${p.notas ? `<div class="spec-box mt12">${esc(p.notas)}</div>` : ''}
@@ -4346,12 +4376,19 @@ window.editarGastoPrestamo = async function(id){
     { name:'concepto', label:'Concepto', type:'text', required:true, initial: c.concepto || '' },
     { name:'proveedor', label:'Proveedor', type:'text', initial: c.proveedor || '' },
     { name:'valor', label:'Valor total', type:'money', required:true, initial: c.valor_total },
-    { name:'rubro', label:'Rubro', type:'select', options: _rubroOpts(), initial: c.rubro || rubroDeTexto(c.concepto) },
+    { name:'factura', label:'N° de factura (opcional)', type:'text', initial: c.numero_factura || '' },
+    { name:'rubro', label:'Rubro (si no tiene productos)', type:'select', options: _rubroOpts(), initial: c.rubro || rubroDeTexto(c.concepto) },
+    { name:'items', label:'Productos: uno por línea → cantidad | producto | valor total', type:'textarea', initial: itemsATexto(itemsFactura(c)), placeholder:'4 | Agroclear 7x8x72 | 7.248.000\n20 | Perro pesado 1/4 | 56.000' },
     { name:'fecha', label:'Fecha', type:'date', initial: toDateInput(c.fecha_compra) }
   ]});
   if (!r) return;
-  const r2 = await guardarFila('compras', id, { concepto:r.concepto, proveedor:r.proveedor || null, valor_total: numPlata(r.valor), rubro:r.rubro, fecha_compra: r.fecha || c.fecha_compra });
-  toast(r2.success ? '✅ Gasto actualizado' : r2.msg); if (r2.success) render();
+  const nuevos = textoAItems(r.items), viejos = itemsFactura(c);
+  // Conserva el rubro que ya tenía cada producto si no cambió el nombre
+  nuevos.forEach(x => { const v = viejos.find(y => y.d === x.d); if (v) { x.r = v.r; x.u = v.u; } });
+  const suma = nuevos.reduce((a,x) => a + x.v, 0), valor = numPlata(r.valor);
+  const r2 = await guardarFila('compras', id, { concepto:r.concepto, proveedor:r.proveedor || null, valor_total: valor, rubro:r.rubro, fecha_compra: r.fecha || c.fecha_compra,
+    numero_factura: String(r.factura || '').trim() || null, items: nuevos.length ? nuevos : null });
+  toast(r2.success ? (nuevos.length && Math.abs(suma - valor) > 1 ? `⚠️ Guardado, pero los productos suman ${fmtMoney(suma)} y el total es ${fmtMoney(valor)}` : '✅ Gasto actualizado') : r2.msg); if (r2.success) render();
 };
 window.quitarDelPrestamo = async function(tipo, id){
   const ok = await M.confirm({ title:'Quitar del préstamo', body:'El gasto no se borra: pasa a los gastos normales de la finca. ¿Continuar?', okText:'Sí, quitar', cancelText:'Cancelar' });
@@ -4455,23 +4492,25 @@ window.borrarSoporte = async function(id){
 window.informePrestamo = function(id){
   const p = (S.cache.proyectos || []).find(x => x.id === id); if (!p) return;
   const R = resumenProyecto(p);
-  const filas = R.movs.slice().reverse().map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto, proveedor:m.proveedor, rubro:m.rubro, valor:m.valor,
+  const filas = R.movs.map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto + (m.items.length ? ` (${m.items.length} productos)` : ''), proveedor:m.proveedor, rubro:m.items.length ? [...new Set(m.items.map(x => x.r))].join(', ') : m.rubro, valor:m.valor,
     soporte: m.soportes.length ? m.soportes.map((s, i) => `${s.tipo === 'application/pdf' ? 'PDF' : 'Foto'} ${i + 1}`).join(', ') : 'FALTA' }));
   const texto = [`📋 ${p.nombre} · ${p.entidad || ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : '', `Invertido: ${fmtMoney(R.invertido)}`, R.saldo != null ? `Por invertir: ${fmtMoney(R.saldo)}` : '',
-    'Por rubro:', ...R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`), '', ...filas.map(f => `• ${f.fecha} · ${f.concepto} · ${fmtMoney(f.valor)} · soporte: ${f.soporte}`)].filter(x => x !== '').join('\n');
+    'Por rubro:', ...R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`), '', ...R.movs.flatMap((m, i) => [`• ${_fechaCorta(m.fecha)} · ${m.concepto} · ${fmtMoney(m.valor)} · soporte: ${filas[i].soporte}`, ...m.items.map(x => `    – ${x.c.toLocaleString('es-CO')} × ${x.d} · ${fmtMoney(x.v)}`)])].filter(x => x !== '').join('\n');
   abrirInforme({ titulo: `Informe ${p.nombre}`, filtro: `${p.entidad || ''}${R.monto ? ' · prestado ' + fmtMoney(R.monto) : ''}`, n: filas.length, total: R.invertido,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['proveedor','Proveedor'],['rubro','Rubro'],['valor','Valor'],['soporte','Soporte']], filas, texto,
     imprimir: () => imprimirPrestamo(p, R) });
 };
 function imprimirPrestamo(p, R){
   const lote = (S.cache.lotes || []).find(l => l.id === p.lote_id);
-  const filas = R.movs.slice().reverse().map((m, i) => `<tr><td>${i + 1}</td><td>${fmtFecha(m.fecha)}</td><td>${esc(m.concepto)}</td><td>${esc(m.proveedor || '')}</td><td>${esc(m.rubro)}</td><td class="n">${fmtMoney(m.valor)}</td>
-    <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`).join('');
+  const filas = R.movs.map((m, i) => `<tr class="fac"><td>${i + 1}</td><td>${fmtFecha(m.fecha)}</td><td><b>${esc(m.concepto)}</b></td><td>${esc(m.proveedor || '')}</td><td>${esc(m.items.length ? [...new Set(m.items.map(x => x.r))].join(', ') : m.rubro)}</td><td class="n"><b>${fmtMoney(m.valor)}</b></td>
+    <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`
+    + (m.items.length ? `<tr><td></td><td colspan="6" style="padding:0 0 6px 0;border-top:none"><table class="det"><tr><th>Cant.</th><th>Producto</th><th>Rubro</th><th>V. unitario</th><th>Valor</th></tr>${m.items.map(x => `<tr><td class="n">${x.c.toLocaleString('es-CO')}</td><td>${esc(x.d)}</td><td>${esc(x.r)}</td><td class="n">${fmtMoney(x.v / x.c)}</td><td class="n">${fmtMoney(x.v)}</td></tr>`).join('')}<tr><th colspan="4">Total factura</th><th class="n">${fmtMoney(m.valor)}</th></tr></table></td></tr>` : '')).join('');
   const fotos = R.movs.flatMap(m => m.soportes.filter(s => s.tipo !== 'application/pdf').map(s => `<figure><img src="${esc(s.url)}"><figcaption>${fmtFecha(m.fecha)} · ${esc(m.concepto)}</figcaption></figure>`)).join('');
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(p.nombre)} · Finca El Retiro</title>
 <style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
 .res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n{text-align:right;white-space:nowrap}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n,th.n{text-align:right;white-space:nowrap}
+tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det th{background:#F4F6F0;font-weight:600}
 .fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:150px;object-fit:cover;border:1px solid #ccc}.fotos figcaption{font-size:10px;color:#555}
 .btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
 <button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
