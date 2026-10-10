@@ -71,7 +71,7 @@ const formaPago = m => {
   if (/tarjeta|falabella/.test(t)) return 'Tarjeta';
   return m.tipo === 'jornal' ? 'Efectivo' : '—';
 };
-const celdaSoporte = m => m.soportes.length ? m.soportes.map(s => `Anexo ${s.n}`).join(', ') : '<span class="falta">Sin soporte</span>';
+const celdaSoporte = m => m.soportes.length ? m.soportes.map(s => s.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>';
 
 const filas = (lista, desde) => lista.map((m, i) => `
   <tr class="mov"><td class="c">${desde + i}</td><td class="nw">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
@@ -112,8 +112,8 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c{text-align:center}.nw{white-s
 .barra{height:10px;background:#639922;border-radius:2px}
 .gastos{font-size:9pt;table-layout:fixed}.gastos td{overflow-wrap:anywhere}.gastos tr.mov td{background:#FAFCF6}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.5pt}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 4px}.w1{width:40px}.w2{width:90px}
-.falta{color:#B07010;font-style:italic}.indice{font-size:8pt}.indice td,.indice th{padding:2px 5px}
-.fotos{display:grid;grid-template-columns:1fr 1fr;gap:12px 10px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:72mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
+.falta{color:#B07010;font-style:italic}.indice{font-size:8pt}.indice td,.indice th{padding:2px 5px}.indice td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fotos{display:flex;flex-wrap:wrap;justify-content:space-between;row-gap:12px}.fotos figure{margin:0;width:49%;break-inside:avoid;page-break-inside:avoid}.fotos img{width:100%;height:61mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
 .firma{margin-top:60px;width:70mm;border-top:1px solid #111;padding-top:5px}
 .pie{font-size:8pt;color:#777;margin-top:16px}
 </style></head><body>
@@ -159,20 +159,20 @@ ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
 ${CFG.nota_reparacion ? `<div class="destacado">${esc(CFG.nota_reparacion)}</div>` : ''}
 
 <h2>4. Detalle de gastos de la construcción (en orden de fecha)</h2>
-<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
+<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Anexo</th></tr>
 ${filas(obra, 1)}
 <tr><th colspan="6">Total construcción</th><th class="n">${plata(totalObra)}</th><th></th></tr></table>
 
 ${cultivo.length ? `<h2>5. ${esc(CFG.cultivo.titulo)}</h2>
-<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Soporte</th></tr>
+<table class="gastos"><colgroup><col style="width:4%"><col style="width:9%"><col style="width:14%"><col style="width:36%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup><tr><th>#</th><th>Fecha</th><th>Proveedor</th><th>Concepto</th><th>Rubro</th><th>Pago</th><th class="n">Valor</th><th>Anexo</th></tr>
 ${filas(cultivo, obra.length + 1)}
 <tr><th colspan="6">Total</th><th class="n">${plata(totalCultivo)}</th><th></th></tr></table>` : ''}
 
 ${fotosObra.length ? `<h2>${cultivo.length ? 6 : 5}. Registro fotográfico de la obra</h2>
 <div class="fotos">${fotosObra.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 
-${anexos.length ? `<h2>Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:8%"><col style="width:46%"><col style="width:46%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
-${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc(a.mov.concepto.slice(0, 70))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}
+${anexos.length ? `<h2 style="break-before:page">Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}
 
 ${CFG.firma ? `<div class="firma" style="margin-top:40px"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
 <div class="pie">Informe generado con la app Finca El Retiro el ${fechaLarga(hoy)}. Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
