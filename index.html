@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.6</title>
+<title>Finca El Retiro v12.7</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -2540,7 +2540,7 @@ function informeDePrestamo(){
   const R = resumenProyecto(p);
   const filas = R.movs.map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto, proveedor:m.proveedor, rubro:m.rubro, valor:m.valor, soporte: m.soportes.length ? `${m.soportes.length} archivo(s)` : 'FALTA' }));
   const texto = [`🏦 ${p.nombre}${p.entidad ? ' · ' + p.entidad : ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : 'Prestado: falta poner el monto', ...(R.desembolsado ? [`Desembolsado (real): ${fmtMoney(R.desembolsado)} · el banco descontó ${fmtMoney(R.descuento)}`] : []), `Invertido: ${fmtMoney(R.invertido)} en ${R.movs.length} gasto(s)`,
-    R.saldo != null ? `Por invertir: ${fmtMoney(R.saldo)} (${R.pct.toLocaleString('es-CO')}% invertido)` : '', R.rubros.length ? 'Por rubro:\n' + R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`).join('\n') : '',
+    R.saldo != null ? `${saldoTexto(R)} (${R.pct.toLocaleString('es-CO')}% invertido)` : '', R.rubros.length ? 'Por rubro:\n' + R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`).join('\n') : '',
     `Soportes: ${R.conSoporte} de ${R.movs.length} gastos${R.movs.length - R.conSoporte ? ` · faltan ${R.movs.length - R.conSoporte}` : ''}`, 'Ábrelo en Dinero → Préstamo para adjuntar facturas o sacar el informe para el banco.'].filter(Boolean).join('\n');
   return { titulo: p.nombre, filtro: p.entidad || '', cols:[['fecha','Fecha'],['concepto','Concepto'],['rubro','Rubro'],['valor','Valor'],['soporte','Soporte']], filas, n: filas.length, total: R.invertido, texto, imprimir: () => imprimirPrestamo(p, R) };
 }
@@ -4213,6 +4213,9 @@ function rubroDeTexto(t){
 }
 /* Todo lo que se anota en el lote del préstamo (el invernadero) va a las cuentas del préstamo */
 function proyectoDeLote(loteId){ return loteId ? (S.cache.proyectos || []).find(p => p.activo !== false && p.lote_id === loteId) || null : null; }
+/* Saldo del préstamo: lo que falta por invertir, o lo que se puso de más con plata propia */
+function saldoCelda(R){ return R.saldo != null && R.saldo < 0 ? `<div><b style="color:var(--yl)">${fmtMoney(-R.saldo)}</b>Puesto de su bolsillo</div>` : `<div><b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b>Por invertir</div>`; }
+function saldoTexto(R){ return R.saldo == null ? '' : R.saldo < 0 ? `Se pasó del préstamo: ${fmtMoney(-R.saldo)} puestos de su bolsillo` : `Por invertir: ${fmtMoney(R.saldo)}`; }
 function proyectoPrincipal(){ return (S.cache.proyectos || []).find(p => p.activo !== false) || null; }
 /* Gastos (compras) y jornales del préstamo como movimientos comunes */
 function movimientosProyecto(p){
@@ -4261,7 +4264,7 @@ function tarjetaPrestamo(){
   const R = resumenProyecto(p);
   return plegable('dinero-prestamo', `<i class="ti ti-building-bank"></i> ${esc(p.nombre)}`, `
     <div class="map-dims rend-grid" style="margin-bottom:8px">
-      <div><b>${R.desembolsado ? fmtMoney(R.desembolsado) : R.monto ? fmtMoney(R.monto) : '—'}</b>${R.desembolsado ? 'Desembolsado' : 'Prestado'}</div><div><b>${fmtMoney(R.invertido)}</b>Invertido</div><div><b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b>Por invertir</div>
+      <div><b>${R.desembolsado ? fmtMoney(R.desembolsado) : R.monto ? fmtMoney(R.monto) : '—'}</b>${R.desembolsado ? 'Desembolsado' : 'Prestado'}</div><div><b>${fmtMoney(R.invertido)}</b>Invertido</div>${saldoCelda(R)}
     </div>
     ${R.pct != null ? `<div class="ciclo-bar"><div class="ciclo-bar-fill" style="width:${R.pct}%"></div></div><div class="ciclo-info"><span>${R.pct.toLocaleString('es-CO')}% invertido</span><span>${R.conSoporte} de ${R.movs.length} con soporte</span></div>` : `<div class="text-tiny" style="color:var(--tx3)">Falta el monto del préstamo · ${R.conSoporte} de ${R.movs.length} gastos con soporte</div>`}
     <button class="btn btn-primary btn-block mt12" onclick="abrirPrestamo('${p.id}')"><i class="ti ti-folder-open"></i> Abrir préstamo</button>`,
@@ -4307,7 +4310,7 @@ function renderPrestamo(){
     <div class="row gap6" style="flex-wrap:wrap;margin:8px 0"><button class="btn btn-sm btn-soft" onclick="editarPrestamo('${p.id}')"><i class="ti ti-edit"></i> Datos del préstamo</button><button class="btn btn-sm btn-blue" onclick="informePrestamo('${p.id}')"><i class="ti ti-report"></i> Informe para el banco</button></div>
     <div class="card" style="border-left:3px solid var(--gm)">
       <div class="map-dims rend-grid" style="margin-bottom:8px;background:none;border:none;padding:0">
-        <div><b>${R.monto ? fmtMoney(R.monto) : '—'}</b>Prestado</div>${R.desembolsado ? `<div><b>${fmtMoney(R.desembolsado)}</b>Desembolsado</div>` : ''}<div><b style="color:var(--rd)">${fmtMoney(R.invertido)}</b>Invertido</div><div><b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b>Por invertir</div>
+        <div><b>${R.monto ? fmtMoney(R.monto) : '—'}</b>Prestado</div>${R.desembolsado ? `<div><b>${fmtMoney(R.desembolsado)}</b>Desembolsado</div>` : ''}<div><b style="color:var(--rd)">${fmtMoney(R.invertido)}</b>Invertido</div>${saldoCelda(R)}
       </div>
       ${R.descuento > 0 ? `<div class="text-tiny" style="margin-bottom:6px">El banco descontó <b>${fmtMoney(R.descuento)}</b> (${(Math.round(R.descuento / R.monto * 1000) / 10).toLocaleString('es-CO')} %) en seguro y comisiones: entró ${fmtMoney(R.desembolsado)} a la cuenta.</div>` : ''}
       ${R.pct != null ? `<div class="ciclo-bar"><div class="ciclo-bar-fill" style="width:${R.pct}%"></div></div><div class="ciclo-info"><span>${R.pct.toLocaleString('es-CO')}% ${R.desembolsado ? 'de lo desembolsado' : 'del préstamo'} invertido</span></div>` : `<div class="text-tiny" style="color:var(--tx3)">Toca «Datos del préstamo» para poner el monto prestado.</div>`}
@@ -4505,7 +4508,7 @@ window.informePrestamo = function(id){
   const R = resumenProyecto(p);
   const filas = R.movs.map(m => ({ fecha:_fechaCorta(m.fecha), dia:fechaDia(m.fecha), concepto:m.concepto + (m.items.length ? ` (${m.items.length} productos)` : ''), proveedor:m.proveedor, rubro:m.items.length ? [...new Set(m.items.map(x => x.r))].join(', ') : m.rubro, valor:m.valor,
     soporte: m.soportes.length ? m.soportes.map((s, i) => `${s.tipo === 'application/pdf' ? 'PDF' : 'Foto'} ${i + 1}`).join(', ') : 'FALTA' }));
-  const texto = [`📋 ${p.nombre} · ${p.entidad || ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : '', R.desembolsado ? `Desembolsado (real): ${fmtMoney(R.desembolsado)} · descuentos del banco ${fmtMoney(R.descuento)}` : '', `Invertido: ${fmtMoney(R.invertido)}`, R.saldo != null ? `Por invertir: ${fmtMoney(R.saldo)}` : '',
+  const texto = [`📋 ${p.nombre} · ${p.entidad || ''}`, R.monto ? `Prestado: ${fmtMoney(R.monto)}` : '', R.desembolsado ? `Desembolsado (real): ${fmtMoney(R.desembolsado)} · descuentos del banco ${fmtMoney(R.descuento)}` : '', `Invertido: ${fmtMoney(R.invertido)}`, saldoTexto(R),
     'Por rubro:', ...R.rubros.map(([r, v]) => `• ${r}: ${fmtMoney(v)}`), '', ...R.movs.flatMap((m, i) => [`• ${_fechaCorta(m.fecha)} · ${m.concepto} · ${fmtMoney(m.valor)} · soporte: ${filas[i].soporte}`, ...m.items.map(x => `    – ${x.c.toLocaleString('es-CO')} × ${x.d} · ${fmtMoney(x.v)}`)])].filter(x => x !== '').join('\n');
   abrirInforme({ titulo: `Informe ${p.nombre}`, filtro: `${p.entidad || ''}${R.monto ? ' · prestado ' + fmtMoney(R.monto) : ''}`, n: filas.length, total: R.invertido,
     cols:[['fecha','Fecha'],['concepto','Concepto'],['proveedor','Proveedor'],['rubro','Rubro'],['valor','Valor'],['soporte','Soporte']], filas, texto,
@@ -4527,7 +4530,7 @@ tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det
 <button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
 <h1>${esc(p.nombre)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca${p.entidad ? ' · ' + esc(p.entidad) : ''}${lote ? ' · Lote ' + esc(lote.codigo) : ''}</div>
 <div>Informe generado el ${fmtFechaLarga(fechaLocalISO())}${p.fecha_desembolso ? ' · Desembolso: ' + fmtFecha(p.fecha_desembolso) : ''}${p.plazo_meses ? ' · Plazo: ' + p.plazo_meses + ' meses' : ''}</div>
-<div class="res"><div>Monto prestado<b>${R.monto ? fmtMoney(R.monto) : '—'}</b></div>${R.desembolsado ? `<div>Desembolsado real<b>${fmtMoney(R.desembolsado)}</b></div><div>Descontado por el banco<b>${fmtMoney(R.descuento)}</b></div>` : ''}<div>Total invertido<b>${fmtMoney(R.invertido)}</b></div><div>Saldo por invertir<b>${R.saldo != null ? fmtMoney(R.saldo) : '—'}</b></div><div>Gastos con soporte<b>${R.conSoporte} de ${R.movs.length}</b></div></div>
+<div class="res"><div>Monto prestado<b>${R.monto ? fmtMoney(R.monto) : '—'}</b></div>${R.desembolsado ? `<div>Desembolsado real<b>${fmtMoney(R.desembolsado)}</b></div><div>Descontado por el banco<b>${fmtMoney(R.descuento)}</b></div>` : ''}<div>Total invertido<b>${fmtMoney(R.invertido)}</b></div><div>${R.saldo != null && R.saldo < 0 ? 'Puesto con recursos propios' : 'Saldo por invertir'}<b>${R.saldo != null ? fmtMoney(Math.abs(R.saldo)) : '—'}</b></div><div>Gastos con soporte<b>${R.conSoporte} de ${R.movs.length}</b></div></div>
 <h2>Inversión por rubro</h2><table><tr><th>Rubro</th><th>Valor</th><th>%</th></tr>${R.rubros.map(([r, v]) => `<tr><td>${esc(r)}</td><td class="n">${fmtMoney(v)}</td><td class="n">${R.invertido ? Math.round(v / R.invertido * 100) : 0}%</td></tr>`).join('')}<tr><th>Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
 <h2>Detalle de gastos</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Rubro</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
 ${fotos ? `<h2>Registro fotográfico</h2><div class="fotos">${fotos}</div>` : ''}
