@@ -1,0 +1,33 @@
+{
+  "_ayuda": "Textos del informe del préstamo del invernadero. Edita estos campos y vuelve a generar el PDF con: node informes/generar_informe.mjs",
+  "proyecto_id": "20bf624c-f465-4156-afbc-f4b157067aaa",
+  "titulo": "Informe de inversión",
+  "subtitulo": "Préstamo para la construcción del invernadero",
+  "titular": { "nombre": "Brian Roberto Escobar Morales", "cedula": "1.113.524.335" },
+  "finca": "Finca El Retiro · Pradera, Valle del Cauca",
+  "credito": {
+    "numero": "****1371",
+    "linea": "Inversión ordinaria FINAGRO",
+    "oficina": "Banco Agrario de Colombia · Oficina Palmira",
+    "plazo": "60 meses · 10 cuotas semestrales · 360 días de gracia a capital",
+    "tasa": "18,44 % E.A."
+  },
+  "descripcion_obra": [
+    "Invernadero de 24 m × 70 m (1.680 m²) en el lote Invernadero de la finca.",
+    "Estructura en guadua inmunizada, anclada con varilla, cemento y chipa; cubierta en plástico Agroclear con malla, guayas y tensores.",
+    "Sistema de riego por goteo con cinta Pathfinder, tubería PVC de presión, motobomba e inyector Venturi para fertirriego.",
+    "Construcción contratada a $6.500 por m² con Jesús Alveiro Mera Pechene, más mano de obra contratada en El Retiro."
+  ],
+  "nota_reparacion": "En septiembre de 2026, después del terremoto y los vendavales, la estructura sufrió daños y se compró guadua adicional para repararla.",
+  "cultivo": {
+    "_ayuda": "Gastos que no son de la construcción sino de la puesta en marcha del primer cultivo. Se muestran en una sección aparte.",
+    "titulo": "Puesta en marcha del primer cultivo",
+    "rubros": ["Semilla y plántulas"],
+    "incluir_consumos_de_bodega": true
+  },
+  "mostrar_recursos_propios": true,
+  "fotos_obra": [
+    { "_ejemplo": "Agrega aquí las fotos de la obra: archivo (ruta local o URL) y título", "archivo": "", "titulo": "" }
+  ],
+  "firma": true
+}
