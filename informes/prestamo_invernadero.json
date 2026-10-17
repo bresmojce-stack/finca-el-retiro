@@ -23,12 +23,12 @@
   ],
   "nota_reparacion": "En septiembre de 2026, después del terremoto y los vendavales, la estructura sufrió daños y se compró guadua adicional para repararla.",
   "cultivo": {
-    "_ayuda": "Gastos que no son de la construcción sino de la puesta en marcha del primer cultivo. Se muestran en una sección aparte.",
+    "_ayuda": "Gastos pagados con el préstamo para poner en marcha el primer cultivo del invernadero (no los insumos de la bodega de la finca, que son cuentas aparte).",
     "titulo": "Puesta en marcha del primer cultivo",
     "rubros": [
       "Semilla y plántulas"
     ],
-    "incluir_consumos_de_bodega": true
+    "incluir_consumos_de_bodega": false
   },
   "mostrar_recursos_propios": true,
   "fotos_obra": [
