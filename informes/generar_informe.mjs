@@ -64,8 +64,8 @@ const formaPago = m => {
   if (/efectivo/.test(t) && /transfer/.test(t)) return 'Transferencia y efectivo';
   if (/efectivo/.test(t)) return 'Efectivo';
   if (/nequi/.test(t)) return 'Nequi';
-  if (/transfer|débito|debito/.test(t)) return 'Transferencia';
   if (/tarjeta|falabella/.test(t)) return 'Tarjeta';
+  if (/transfer|débito|debito/.test(t)) return 'Transferencia';
   return m.tipo === 'jornal' ? 'Efectivo' : '—';
 };
 const celdaSoporte = m => m.soportes.length ? m.soportes.map(s => s.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>';
