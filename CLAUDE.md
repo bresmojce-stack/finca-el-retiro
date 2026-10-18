@@ -26,6 +26,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 ## Cómo registrar facturas
 - Una factura = un gasto, con su lista de productos (`items`) y precio neto con IVA. En orden de fecha, sin partirla por rubros.
 - Revisar duplicados antes (número de factura, valor y fecha). Subir siempre el PDF o la foto como soporte.
+- **Fechas claras:** cada pago va en su propio gasto con la fecha real del pago (abonos, adelanto y saldo, pagos por partes = un gasto por pago, "pago 1 de 3"…), cada uno con su comprobante. Nunca juntar en una fila pagos de fechas distintas. Si no se sabe la fecha, decirlo en el concepto ("fecha por confirmar") y preguntar.
 - Facturas electrónicas de proveedores agrícolas (Agroinsumos Pradera, Cenagro, Cafioccidente, Agroindustrial JE, Agropinos, Hidroequipos, semillas…) casi siempre son de la finca o del invernadero; las de Éxito, Ktronix/Alkosto, Claro, Celsia, seguros, etc. son personales.
 - Entrada a bodega: sumar en `inventario` (cantidad_actual, total_ingresado, precio_total, costo_unitario, ultimo_precio) y crear el gasto con el formato de la app: "Producto (cantidad UNIDAD)" o "Producto (reposición: cantidad UNIDAD)", categoría = la del inventario, con proveedor y número de factura.
 - Lo del lote del invernadero que pague el préstamo va al proyecto; lo demás a la finca.
