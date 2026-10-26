@@ -7,7 +7,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Proyecto
 - `index.html`: toda la app (JS sin frameworks). `sw.js`: modo sin conexión.
-- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v12.8).
+- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v12.9).
 - Publicar: trabajar en la rama asignada, push, crear PR y hacer merge a `main` con el MCP de GitHub. Netlify publica `main` en https://finca-el-retiro.netlify.app
 - `informes/`: informe del préstamo en PDF (ver abajo). `informes/salida/` no se sube (está en `.gitignore`).
 

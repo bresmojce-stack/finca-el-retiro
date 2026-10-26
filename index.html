@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.8</title>
+<title>Finca El Retiro v12.9</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -4258,6 +4258,53 @@ function resumenProyecto(p){
     rubros: Object.entries(rubros).sort((a,b) => b[1] - a[1]), conSoporte, generales: (S.cache.soportes || []).filter(s => s.proyecto_id === p?.id && !s.compra_id && !s.jornal_id) };
 }
 
+/* Cuenta «Gastos Lauro»: plata que ha salido para Lauro, cada salida con su fecha y soporte */
+const CUENTA_LAURO = 'Gastos Lauro';
+function tarjetaLauro(){
+  const gs = comprasFinca().filter(c => c.categoria === CUENTA_LAURO).sort((a,b) => tsOrden(b.fecha_compra) - tsOrden(a.fecha_compra));
+  const total = gs.reduce((a,c) => a + (parseFloat(c.valor_total) || 0), 0);
+  const sops = id => (S.cache.soportes || []).filter(s => s.compra_id === id);
+  const fila = c => `<div class="mini-list-item">
+      <div class="mini-list-body"><div class="mini-list-title">${esc(c.concepto)}</div>
+        <div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtDate(c.fecha_compra)}</span>${sops(c.id).map(s => `<span style="cursor:pointer" onclick="verSoporte('${s.id}')"><i class="ti ti-paperclip"></i> soporte</span>`).join('')}<span style="cursor:pointer;color:var(--bl)" onclick="adjuntarSoporte('gasto','${c.id}')"><i class="ti ti-upload"></i> ${sops(c.id).length ? 'otro' : 'subir soporte'}</span></div></div>
+      <div style="font-weight:700;color:var(--rd);font-feature-settings:'tnum';flex-shrink:0">${fmtMoney(c.valor_total)}</div>
+      <div class="row gap6" style="flex-shrink:0;margin-left:4px">
+        <button class="btn btn-sm btn-ghost" onclick="flowEditGasto('${c.id}','${escA(c.concepto||'')}',${c.valor_total},'${escA(c.categoria)}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button>
+        <button class="btn btn-sm btn-ghost" onclick="flowDeleteGasto('${c.id}','${escA(c.concepto||'')}')" style="color:var(--rd);padding:4px;border:none" title="Borrar"><i class="ti ti-trash"></i></button>
+      </div></div>`;
+  return plegable('dinero-lauro', `<i class="ti ti-user-dollar"></i> ${CUENTA_LAURO}`, `
+    <div class="text-tiny" style="margin-bottom:6px">Plata que ha salido para Lauro. Suma en los egresos de la finca.</div>
+    ${gs.length ? `<div class="card">${gs.map(fila).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0">Todavía no hay salidas anotadas.</div>`}
+    <button class="btn btn-red btn-block mt12" onclick="nuevoGastoLauro()"><i class="ti ti-plus"></i> Anotar salida para Lauro</button>`,
+    { resumen: fmtMoney(total) });
+}
+window.nuevoGastoLauro = async function(){
+  const r = await M.form({ title: 'Salida para Lauro', okText: 'Guardar', fields: [
+    { name:'concepto', label:'¿Para qué fue?', type:'text', placeholder:'Ej: adelanto, compra de…', required:true },
+    { name:'valor', label:'Valor', type:'money', required:true },
+    { name:'fecha', label:'Fecha del pago', type:'date', initial: hoyISO() } ] });
+  if (!r) return;
+  const resp = await HANDLERS.add_gasto({ concepto: r.concepto, categoria: CUENTA_LAURO, valor_total: numPlata(r.valor), fecha: r.fecha || null, proveedor: 'Lauro' });
+  toast(resp.msg); render();
+};
+
+/* Cuánta plata ha salido de la finca, por cuenta, y cuánto de eso tiene soporte */
+function tarjetaCuentas(){
+  const conSop = new Set((S.cache.soportes || []).map(s => s.compra_id).filter(Boolean));
+  const conSopJ = new Set((S.cache.soportes || []).map(s => s.jornal_id).filter(Boolean));
+  const nombre = c => (CATS_GASTO.find(o => o.value === c) || {}).label || c || 'Sin categoría';
+  const g = {};
+  const sumar = (k, v, ok) => { g[k] = g[k] || { v:0, s:0, n:0 }; g[k].v += v; g[k].n++; if (ok) g[k].s += v; };
+  comprasFinca().filter(c => c.origen !== 'consumo').forEach(c => sumar(nombre(c.categoria), parseFloat(c.valor_total) || 0, conSop.has(c.id)));
+  jornalesFinca().forEach(j => sumar(nombre('jornales'), parseFloat(j.valor_total) || 0, conSopJ.has(j.id)));
+  const filas = Object.entries(g).sort((a,b) => b[1].v - a[1].v);
+  const total = filas.reduce((a,[,x]) => a + x.v, 0), sop = filas.reduce((a,[,x]) => a + x.s, 0);
+  return plegable('dinero-cuentas', `<i class="ti ti-list-numbers"></i> Gastos de la finca por cuenta`, `<div class="card" style="padding:6px 12px">
+    ${filas.map(([k,x]) => `<div class="lote-cost-row"><span>${esc(k)} <span class="text-tiny">· ${x.n}</span></span><span style="text-align:right"><b style="font-feature-settings:'tnum'">${fmtMoney(x.v)}</b><br><span class="text-tiny">${x.s >= x.v ? 'todo con soporte' : x.s ? fmtMoney(x.v - x.s) + ' sin soporte' : 'sin soporte'}</span></span></div>`).join('')}
+    <div class="lote-cost-row"><span><b>Total</b></span><span style="text-align:right"><b>${fmtMoney(total)}</b><br><span class="text-tiny">${fmtMoney(sop)} con soporte</span></span></div>
+  </div><div class="text-tiny" style="margin-top:4px">No incluye el préstamo del invernadero, que va aparte.</div>`, { resumen: fmtMoney(total) });
+}
+
 /* Tarjeta en Dinero */
 function tarjetaPrestamo(){
   const p = proyectoPrincipal(); if (!p) return '';
@@ -4457,8 +4504,7 @@ window.adjuntarSoporte = function(tipo, id){
   inp.type = 'file'; inp.accept = 'image/*,application/pdf'; inp.multiple = true;
   inp.onchange = async () => {
     const files = [...(inp.files || [])]; if (!files.length) return;
-    const p = proyectoPrincipal();
-    const proyecto_id = tipo === 'proyecto' ? id : ((tipo === 'gasto' ? (S.cache.compras || []).find(c => c.id === id) : (S.cache.jornales || []).find(j => j.id === id))?.proyecto_id || p?.id || null);
+    const proyecto_id = tipo === 'proyecto' ? id : ((tipo === 'gasto' ? (S.cache.compras || []).find(c => c.id === id) : (S.cache.jornales || []).find(j => j.id === id))?.proyecto_id || null);
     let ok = 0;
     for (const f of files){
       const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
@@ -4590,6 +4636,8 @@ function renderDinero(){
     </div>
     <div class="balance-card"><div class="balance-label">Balance real</div><div class="balance-val" style="color:${balance>=0?'var(--g)':'var(--rd)'}">${fmtMoney(balance)}</div></div>
     ${tarjetaPrestamo()}
+    ${tarjetaLauro()}
+    ${tarjetaCuentas()}
     ${loteCostHtml}
     <div class="row gap8 mt12"><button class="btn btn-red flex1" id="btn-add-gasto"><i class="ti ti-minus"></i> Gasto</button><button class="btn btn-yellow flex1" onclick="flowNuevoJornal()"><i class="ti ti-user"></i> Jornal</button><button class="btn btn-primary flex1" id="btn-add-ingreso"><i class="ti ti-plus"></i> Ingreso</button></div>
     ${plegable('dinero-movimientos', `<i class="ti ti-history"></i> Últimos movimientos`, `<div class="card">${movList}</div>`, { abierta: true, resumen: String(ultimos.length) })}
@@ -5125,17 +5173,8 @@ window.flowDeleteLote = async function(id, codigo){
 };
 
 window.flowEditGasto = async function(id, concepto, valor, categoria){
-  const catOpts = [
-    { value:'Agroquímicos', label:'Agroquímicos' },
-    { value:'Nutrición', label:'Abonos (Nutrición)' },
-    { value:'Insumos Consumibles', label:'Insumos Consumibles' },
-    { value:'Equipos y Herramientas', label:'Equipos y Herramientas' },
-    { value:'EPP', label:'Protección (EPP)' },
-    { value:'jornales', label:'Mano de obra / Jornales' },
-    { value:'Transporte', label:'Transporte / fletes' },
-    { value:'servicios', label:'Servicios' },
-    { value:'otro', label:'Otro' }
-  ];
+  /* Si el gasto tiene una categoría que no está en la lista, se conserva (antes se cambiaba sin querer) */
+  const catOpts = CATS_GASTO.some(o => o.value === categoria) || !categoria ? CATS_GASTO : [...CATS_GASTO, { value:categoria, label:categoria }];
   const g = S.cache.compras.find(x => x.id == id);
   const r = await M.form({
     title:'Editar gasto', okText:'Guardar cambios',
@@ -5199,23 +5238,29 @@ window.flowDeleteTask = async function(id, name){
   if(r.success) render();
 };
 
+const CATS_GASTO = [
+  { value:'Agroquímicos', label:'Agroquímicos' },
+  { value:'Nutrición', label:'Abonos (Nutrición)' },
+  { value:'Insumos Consumibles', label:'Insumos Consumibles' },
+  { value:'Equipos y Herramientas', label:'Equipos y Herramientas' },
+  { value:'Semilla', label:'Semilla' },
+  { value:'EPP', label:'Protección (EPP)' },
+  { value:'jornales', label:'Mano de obra / Jornales' },
+  { value:'Transporte', label:'Transporte / fletes' },
+  { value:'servicios', label:'Servicios' },
+  { value:'Gastos Lauro', label:'Gastos Lauro' },
+  { value:'Por verificar', label:'Por verificar' },
+  { value:'Pago crédito', label:'Pago del crédito' },
+  { value:'otro', label:'Otro' }
+];
+
 async function flowAddGasto(){
   const r = await M.form({
     title: 'Registrar gasto', okText: 'Guardar',
     fields: [
       { name:'concepto', label:'¿En qué se gastó?', type:'text', placeholder:'Ej: Jornales, Abono...', required:true },
       { name:'valor', label:'Valor total', type:'money', required:true },
-      { name:'categoria', label:'Categoría del gasto', type:'select', options:[
-        { value:'Agroquímicos', label:'Agroquímicos' },
-        { value:'Nutrición', label:'Abonos (Nutrición)' },
-        { value:'Insumos Consumibles', label:'Insumos Consumibles' },
-        { value:'Equipos y Herramientas', label:'Equipos y Herramientas' },
-        { value:'EPP', label:'Protección (EPP)' },
-        { value:'jornales', label:'Mano de obra / Jornales' },
-        { value:'Transporte', label:'Transporte / fletes' },
-        { value:'servicios', label:'Servicios' },
-        { value:'otro', label:'Otro' }
-      ]},
+      { name:'categoria', label:'Categoría del gasto', type:'select', options: CATS_GASTO },
       { name:'fecha', label:'Fecha del gasto', type:'date', initial: hoyISO() }
     ]
   });
