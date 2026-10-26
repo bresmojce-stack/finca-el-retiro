@@ -1,5 +1,7 @@
 # Finca El Retiro — guía para Claude
 
+**Primero leer `MANUAL.md` (reglas de Brian para todas las apps, 2026-10-26): manda sobre esta guía si chocan.**
+
 App web (PWA) de la finca El Retiro (Pradera, Valle del Cauca) de Brian Roberto Escobar Morales (C.C. 1.113.524.335).
 Se habla siempre en español, claro y sin tecnicismos.
 
