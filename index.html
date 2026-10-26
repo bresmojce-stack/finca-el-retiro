@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.7</title>
+<title>Finca El Retiro v12.8</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -4496,7 +4496,8 @@ window.borrarSoporte = async function(id){
   M._close(null);
   const ok = await M.confirm({ title:'Borrar soporte', body:`¿Eliminar «${esc(s.nombre || 'este archivo')}»? No se puede deshacer.`, okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
   if (!ok) return;
-  if (s.ruta) await sb.storage.from('soportes').remove([s.ruta]);
+  /* Una factura con varios productos comparte el archivo: solo se borra cuando ya nadie lo usa */
+  if (s.ruta && !(S.cache.soportes || []).some(x => x.id !== id && x.ruta === s.ruta)) await sb.storage.from('soportes').remove([s.ruta]);
   const { error } = await sb.from('soportes').delete().eq('id', id);
   if (error){ toast('Error: ' + error.message); return; }
   await refreshAll(); toast('🗑️ Soporte borrado'); render();
