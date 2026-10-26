@@ -38,6 +38,11 @@ Se habla siempre en español, claro y sin tecnicismos.
 - Textos editables en `informes/prestamo_invernadero.json` (crédito, descripción de la obra, fotos, sección de cultivo; `incluir_consumos_de_bodega` debe quedar en `false`).
 - Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla.
 
+## Informe de gastos de la finca (PDF tamaño carta)
+- Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_finca.mjs`
+- Toda la plata que ha salido de la finca (sin el préstamo), por mes y por cuenta, con lo que tiene y no tiene soporte; las facturas van como anexos.
+- Cuentas especiales: `Gastos Lauro` (plata que ha salido para Lauro), `Pago crédito` (cuotas del préstamo; van en la finca, no en lo invertido del invernadero), `Por verificar`.
+
 ## Pendientes conocidos
 - Factura de la motobomba de Homecenter ($2.188.400, 24/05, pagada con tarjeta Falabella): hay que pedirla en Homecenter Palmira Unicentro.
 - Número completo del crédito (solo se conoce ****1371).
