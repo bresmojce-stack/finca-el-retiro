@@ -40,6 +40,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Informe de gastos de la finca (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_finca.mjs`
+- Con `--compras`: solo lo comprado para la finca (sin jornales, Por verificar, cuotas ni Lauro), con sus facturas.
 - Toda la plata que ha salido de la finca (sin el préstamo), por mes y por cuenta, con lo que tiene y no tiene soporte; las facturas van como anexos.
 - Cuentas especiales: `Gastos Lauro` (plata que ha salido para Lauro), `Pago crédito` (cuotas del préstamo; van en la finca, no en lo invertido del invernadero), `Por verificar`.
 
