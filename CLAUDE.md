@@ -26,6 +26,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 - Salidas de Davivienda sin destino conocido: por decisión del usuario quedan fuera (respaldo en el scratchpad de la sesión del 17/10/2026).
 
 ## Cómo registrar facturas
+- **Memoria de facturas: `facturas/consecutivos.md`.** Ahí está cada factura que llegó al correo, su total y si está en la app. Al revisar el correo, empezar desde la fecha de la última revisión, comparar el total de cada factura con la suma de sus filas en la app y actualizar el archivo.
 - Una factura = un gasto, con su lista de productos (`items`) y precio neto con IVA. En orden de fecha, sin partirla por rubros.
 - Revisar duplicados antes (número de factura, valor y fecha). Subir siempre el PDF o la foto como soporte.
 - **Fechas claras:** cada pago va en su propio gasto con la fecha real del pago (abonos, adelanto y saldo, pagos por partes = un gasto por pago, "pago 1 de 3"…), cada uno con su comprobante. Nunca juntar en una fila pagos de fechas distintas. Si no se sabe la fecha, decirlo en el concepto ("fecha por confirmar") y preguntar.
