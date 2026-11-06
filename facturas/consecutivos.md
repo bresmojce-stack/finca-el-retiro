@@ -23,7 +23,7 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | FEO7207 | 14/07 | 152.400 | OK |
 | FEO7284 | 21/07 | 209.000 | OK |
 | FEO7338 | 26/07 | 86.000 | OK |
-| FEO7607 | 19/08 | 395.000 | Revisar: en la app 347.000, falta Trionex 48.000 |
+| FEO7607 | 19/08 | 395.000 | OK (Trionex 48.000 anotado el 06/11, solo gasto) |
 | FEO7774 | 31/08 | 49.000 | OK |
 | FEO7986 | 17/09 | 356.500 | OK |
 | FEO8151 | 30/09 | 326.400 | OK |
@@ -42,7 +42,7 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | 3RZ39593 | 09/06 | 660.600 | OK |
 | 3RZ40968 | 30/06 | 802.000 | OK |
 | 2RZ8939 | 27/08 | 751.050 | OK |
-| 3RZ44558 | 29/08 | 1.660.000 | Revisar: en la app 1.577.600, falta Incipio 82.400 |
+| 3RZ44558 | 29/08 | 1.660.000 | OK (Incipio 82.400 anotado el 06/11, solo gasto) |
 | 3RZ45639 | 15/09 | 1.641.400 | OK (11 productos pegados el 06/11) |
 | 3RZ48158 | 23/10 | 1.430.064 | OK |
 | 3RZ48271 | 26/10 | 238.700 | OK |
@@ -70,7 +70,7 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | PLE39575 | 09/06 | 1.594.900 | OK |
 | PRE25847 | 19/08 | 170.000 | OK |
 | PLE44275 | 23/09 | 45.400 | OK |
-| PLE44276 | 23/09 | 211.200 | OK (préstamo; en la app "PLE 44276") |
+| PLE44276 | 23/09 | 211.200 | OK (préstamo) |
 | PLE46000 | 30/10 | 13.724 | OK |
 
 **Último consecutivo: PLE46000 / PRE25847**
@@ -105,6 +105,9 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 
 En la app hay también tirillas de Homecenter que no llegaron al correo: 3109100458745 (09/06) y 3203 0100436529 (29/07).
 Pendiente: factura de la motobomba ($2.188.400, 24/05) que no llegó al correo.
+
+## Compras anotadas a mano sin factura (posibles repetidas)
+- Trionex 30/08 $52.000 e Incipio 21/09 $85.800: no corresponden a ninguna factura del correo. Si Andrés confirma que eran las de FEO7607 o 3RZ44558, borrarlas.
 
 ## Personales (no van en la app)
 Éxito, Alkosto/Ktronix (Colombiana de Comercio), Claro, Celsia, Celsia Internet, Seguros Mundial, Comfandi.
