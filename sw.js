@@ -7,7 +7,15 @@
  *  - Si la red falla y es una navegación, devuelve el index.html cacheado
  */
 
-const CACHE_VERSION = 'finca-retiro-v13-0';
+const CACHE_VERSION = 'finca-retiro-v13-1';
+// Las librerías de internet van en una caja aparte que no se borra al actualizar, para que la app abra sin señal
+const CDN_CACHE = 'finca-retiro-cdn-v1';
+const CDN_PRECACHE = [
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js'
+];
 const APP_SHELL = [
   './',
   './index.html',
@@ -37,7 +45,8 @@ const CDN_HOSTS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => {
+    caches.open(CDN_CACHE).then((c) => Promise.all(CDN_PRECACHE.map((u) => c.match(u).then((hit) => hit || c.add(new Request(u, { mode: 'cors' })).catch(() => {}))))).catch(() => {})
+      .then(() => caches.open(CACHE_VERSION)).then((cache) => {
       // Intentar cachear todo, pero no fallar si algún archivo no está disponible
       return Promise.all(
         APP_SHELL.map((url) =>
@@ -53,7 +62,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
-        keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))
+        keys.filter((k) => k !== CACHE_VERSION && k !== CDN_CACHE).map((k) => caches.delete(k))
       )
     ).then(() => self.clients.claim())
   );
@@ -101,7 +110,7 @@ self.addEventListener('fetch', (event) => {
 
   if (isAppShell || isCdn) {
     event.respondWith(
-      caches.open(CACHE_VERSION).then(async (cache) => {
+      caches.open(isCdn ? CDN_CACHE : CACHE_VERSION).then(async (cache) => {
         const cached = await cache.match(req);
         const networkFetch = fetch(req)
           .then((res) => {
