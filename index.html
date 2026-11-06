@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v12.9</title>
+<title>Finca El Retiro v13.0</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -4305,6 +4305,113 @@ function tarjetaCuentas(){
   </div><div class="text-tiny" style="margin-top:4px">No incluye el préstamo del invernadero, que va aparte.</div>`, { resumen: fmtMoney(total) });
 }
 
+/* ── Gastos de la finca por fecha (como el préstamo): una factura = una fila, con sus productos y soportes ── */
+function nombreCuenta(c){ return (CATS_GASTO.find(o => o.value === c) || {}).label || c || 'Sin categoría'; }
+function movimientosFinca(){
+  const sop = S.cache.soportes || [], grupos = {}, movs = [];
+  const unicos = arr => { const vistos = new Set(); return arr.filter(s => { const k = s.ruta || s.url || s.id; if (vistos.has(k)) return false; vistos.add(k); return true; }); };
+  comprasFinca().filter(c => c.origen !== 'consumo').forEach(c => {
+    const f = String(c.numero_factura || '').trim(), k = f ? f + '|' + fechaDia(c.fecha_compra) + '|' + (c.proveedor || '') : null;
+    const fila = { id:c.id, d:c.concepto || '', v:_num(c.valor_total), cat:c.categoria, c };
+    if (k && grupos[k]){ const g = grupos[k]; g.filas.push(fila); g.valor += fila.v; g.cats.add(nombreCuenta(c.categoria)); g.soportes.push(...sop.filter(s => s.compra_id === c.id)); return; }
+    const m = { tipo:'gasto', id:c.id, fecha:c.fecha_compra, factura:f, proveedor:c.proveedor || '', concepto:c.concepto || '', valor:fila.v, filas:[fila], items:itemsFactura(c),
+      cats:new Set([nombreCuenta(c.categoria)]), soportes:sop.filter(s => s.compra_id === c.id) };
+    if (k) grupos[k] = m; movs.push(m);
+  });
+  jornalesFinca().forEach(j => movs.push({ tipo:'jornal', id:j.id, fecha:j.fecha, factura:'', proveedor:j.trabajador || '', concepto:`Jornal ${j.trabajador}: ${j.dias} día(s)${j.nota ? ' · ' + j.nota : ''}`,
+    valor:_num(j.valor_total), filas:[], items:[], cats:new Set([nombreCuenta('jornales')]), soportes:sop.filter(s => s.jornal_id === j.id) }));
+  movs.forEach(m => { m.soportes = unicos(m.soportes); if (m.filas.length > 1) m.concepto = `Factura ${m.factura}`; });
+  return movs.sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha));
+}
+const FILTROS_FINCA = [['todo','Todo'],['compras','Compras'],['jornales','Jornales'],['Gastos Lauro','Lauro'],['Por verificar','Por verificar'],['Pago crédito','Cuotas'],['sinsop','Sin soporte']];
+function filtrarFinca(movs, f){
+  if (f === 'compras') return movs.filter(m => m.tipo === 'gasto' && !m.filas.some(x => ['Gastos Lauro','Por verificar','Pago crédito','jornales'].includes(x.cat)));
+  if (f === 'jornales') return movs.filter(m => m.tipo === 'jornal' || m.filas.some(x => x.cat === 'jornales'));
+  if (f === 'sinsop') return movs.filter(m => !m.soportes.length);
+  if (f && f !== 'todo') return movs.filter(m => m.filas.some(x => x.cat === f));
+  return movs;
+}
+function nombreMesFinca(k){ try { const s = new Date(k + '-15T12:00:00-05:00').toLocaleDateString('es-CO', { month:'long', year:'numeric', timeZone:TZ_FINCA }); return s.charAt(0).toUpperCase() + s.slice(1); } catch(e){ return k; } }
+function tarjetaGastosFinca(){
+  const movs = movimientosFinca(), total = movs.reduce((a,m) => a + m.valor, 0), conS = movs.filter(m => m.soportes.length);
+  return plegable('dinero-finca', `<i class="ti ti-receipt"></i> Gastos de la finca`, `
+    <div class="map-dims rend-grid" style="margin-bottom:8px"><div><b>${fmtMoney(total)}</b>Gastado</div><div><b>${fmtMoney(conS.reduce((a,m) => a + m.valor, 0))}</b>Con soporte</div><div><b style="color:var(--yl)">${movs.length - conS.length}</b>Sin soporte</div></div>
+    <button class="btn btn-primary btn-block" onclick="abrirGastosFinca()"><i class="ti ti-folder-open"></i> Ver gastos por fecha</button>`,
+    { abierta: true, resumen: fmtMoney(total) });
+}
+window.abrirGastosFinca = function(){ S.activeProyecto = 'finca'; Nav.push(); render(); window.scrollTo(0, 0); };
+window.filtroFinca = function(f){ S.filtroFinca = f; render(); };
+function renderGastosFinca(){
+  const todos = movimientosFinca(), f = S.filtroFinca || 'todo', movs = filtrarFinca(todos, f);
+  const total = movs.reduce((a,m) => a + m.valor, 0), conS = movs.filter(m => m.soportes.length), sumS = conS.reduce((a,m) => a + m.valor, 0);
+  const chipSop = s => s.tipo === 'application/pdf'
+    ? `<button class="sop-chip" onclick="verSoporte('${s.id}')" title="${escA(s.nombre||'PDF')}"><i class="ti ti-file-type-pdf"></i></button>`
+    : `<img class="sop-thumb" loading="lazy" src="${esc(s.url)}" onclick="verSoporte('${s.id}')" alt="">`;
+  const btnEdit = x => `<button class="btn btn-sm btn-ghost" onclick="flowEditGasto('${x.id}','${escA(x.d)}',${x.v},'${escA(x.cat||'otro')}')" style="padding:2px;border:none" title="Editar"><i class="ti ti-edit"></i></button>`;
+  const btnDel = x => `<button class="btn btn-sm btn-ghost" onclick="flowDeleteGasto('${x.id}','${escA(x.d)}')" style="padding:2px;border:none;color:var(--rd)" title="Borrar"><i class="ti ti-trash"></i></button>`;
+  const fila = m => {
+    const varias = m.filas.length > 1, j = m.tipo === 'jornal';
+    const productos = varias ? `<details class="fac-items"><summary><i class="ti ti-list-details"></i> Ver ${m.filas.length} productos</summary>
+        <div class="inf-wrap" style="max-height:none"><table class="inf-table"><thead><tr><th>Producto</th><th>Valor</th><th></th></tr></thead><tbody>
+        ${m.filas.map(x => `<tr><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v)}</td><td style="white-space:nowrap">${btnEdit(x)}${btnDel(x)}</td></tr>`).join('')}
+        <tr><td><b>Total de la factura</b></td><td class="num"><b>${fmtMoney(m.valor)}</b></td><td></td></tr></tbody></table></div></details>`
+      : m.items.length ? `<details class="fac-items"><summary><i class="ti ti-list-details"></i> Ver ${m.items.length} producto${m.items.length === 1 ? '' : 's'}</summary>
+        <div class="inf-wrap" style="max-height:none"><table class="inf-table"><tbody>${m.items.map(x => `<tr><td class="num">${x.c.toLocaleString('es-CO')}</td><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v)}</td></tr>`).join('')}</tbody></table></div></details>` : '';
+    return `<div class="mini-list-item" style="align-items:flex-start">
+      <div class="icon-pill ${j ? 'ip-brown' : 'ip-red'}" style="width:30px;height:30px;font-size:15px"><i class="ti ${j ? 'ti-user' : 'ti-receipt'}"></i></div>
+      <div class="mini-list-body">
+        <div class="mini-list-title">${esc(m.concepto)}</div>
+        <div class="mini-list-meta"><span><i class="ti ti-calendar"></i> ${fmtFecha(m.fecha)}</span>${m.factura && !varias ? `<span>Fact. ${esc(m.factura)}</span>` : ''}${m.proveedor && !j ? `<span>${esc(m.proveedor)}</span>` : ''}<span>${esc([...m.cats].join(', '))}</span></div>
+        ${productos}
+        <div class="sop-fila">${m.soportes.map(chipSop).join('')}<button class="sop-chip sop-add" onclick="adjuntarSoporte('${m.tipo}','${m.id}')" title="Adjuntar foto o PDF"><i class="ti ti-paperclip"></i>${m.soportes.length ? '' : ' Soporte'}</button></div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-weight:700;color:var(--rd);font-feature-settings:'tnum'">${fmtMoney(m.valor)}</div>
+        ${varias ? '' : `<div class="row gap6" style="justify-content:flex-end;margin-top:4px">${j ? `<button class="btn btn-sm btn-ghost" onclick="flowEditJornal('${m.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeleteJornal('${m.id}')" style="padding:4px;border:none;color:var(--rd)" title="Borrar"><i class="ti ti-trash"></i></button>` : btnEdit(m.filas[0]) + btnDel(m.filas[0])}</div>`}
+      </div></div>`;
+  };
+  const meses = []; movs.forEach(m => { const k = fechaDia(m.fecha).slice(0,7); let g = meses.find(x => x.k === k); if (!g) meses.push(g = { k, movs:[] }); g.movs.push(m); });
+  const nombreMes = nombreMesFinca;
+  return `<div class="panel">
+    <button class="lote-back" onclick="S.activeProyecto=null; Nav.push(); render();"><i class="ti ti-arrow-left"></i> Volver a Dinero</button>
+    <div class="lote-detail-header"><div class="lote-detail-title">Gastos de la finca</div><div class="lote-detail-sub">Toda la plata que ha salido de la finca, por fecha. El préstamo del invernadero va aparte.</div></div>
+    <div class="row gap6" style="flex-wrap:wrap;margin:8px 0"><button class="btn btn-sm btn-blue" onclick="informeFinca()"><i class="ti ti-report"></i> Informe (imprimir o PDF)</button></div>
+    <div class="row gap6" style="flex-wrap:wrap;margin:4px 0 8px">${FILTROS_FINCA.map(([k,l]) => `<button class="btn btn-sm ${k === f ? 'btn-primary' : 'btn-soft'}" onclick="filtroFinca('${escA(k)}')">${esc(l)}</button>`).join('')}</div>
+    <div class="card" style="border-left:3px solid var(--gm)">
+      <div class="map-dims rend-grid" style="margin-bottom:6px;background:none;border:none;padding:0"><div><b style="color:var(--rd)">${fmtMoney(total)}</b>Gastado</div><div><b>${fmtMoney(sumS)}</b>Con soporte</div><div><b style="color:var(--yl)">${fmtMoney(total - sumS)}</b>Sin soporte</div></div>
+      <div class="text-tiny">${movs.length} gasto(s) · ${conS.length} con soporte${movs.length - conS.length ? ` · <b style="color:var(--yl)">${movs.length - conS.length} sin soporte</b>` : ''}</div>
+    </div>
+    ${meses.length ? meses.map((g, i) => plegable('finca-mes-' + g.k, `<i class="ti ti-calendar-month"></i> ${esc(nombreMes(g.k))}`, `<div class="card">${g.movs.map(fila).join('')}</div>`,
+      { abierta: i === 0, resumen: fmtMoney(g.movs.reduce((a,m) => a + m.valor, 0)) })).join('') : `<div class="text-tiny" style="padding:10px 0">No hay gastos con este filtro.</div>`}
+  </div>`;
+}
+window.informeFinca = function(){
+  const f = S.filtroFinca || 'todo', movs = filtrarFinca(movimientosFinca(), f).slice().reverse();
+  const etiqueta = (FILTROS_FINCA.find(x => x[0] === f) || [,'Todo'])[1];
+  const total = movs.reduce((a,m) => a + m.valor, 0), sumS = movs.filter(m => m.soportes.length).reduce((a,m) => a + m.valor, 0);
+  const cuentas = {}; movs.forEach(m => (m.filas.length ? m.filas.map(x => [nombreCuenta(x.cat), x.v]) : [[nombreCuenta('jornales'), m.valor]]).forEach(([k,v]) => cuentas[k] = (cuentas[k] || 0) + v));
+  const meses = {}; movs.forEach(m => { const k = fechaDia(m.fecha).slice(0,7); meses[k] = (meses[k] || 0) + m.valor; });
+  const filas = movs.map((m, i) => `<tr class="fac"><td>${i + 1}</td><td>${fmtFecha(m.fecha)} ${fechaDia(m.fecha).slice(0,4)}</td><td><b>${esc(m.concepto)}</b>${m.factura && m.filas.length < 2 ? '<br>Fact. ' + esc(m.factura) : ''}</td><td>${esc(m.proveedor)}</td><td>${esc([...m.cats].join(', '))}</td><td class="n"><b>${fmtMoney(m.valor)}</b></td>
+    <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`
+    + (m.filas.length > 1 ? `<tr><td></td><td colspan="6" style="padding:0 0 6px 0;border-top:none"><table class="det"><tr><th>Producto</th><th>Valor</th></tr>${m.filas.map(x => `<tr><td>${esc(x.d)}</td><td class="n">${fmtMoney(x.v)}</td></tr>`).join('')}</table></td></tr>` : '')).join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gastos de la finca · Finca El Retiro</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
+.res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n,th.n{text-align:right;white-space:nowrap}
+tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det th{background:#F4F6F0;font-weight:600}
+.btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
+<button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
+<h1>Gastos de la finca${f === 'todo' ? '' : ' · ' + esc(etiqueta)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca · sin el préstamo del invernadero</div>
+<div>Informe generado el ${fmtFechaLarga(fechaLocalISO())}</div>
+<div class="res"><div>Total gastado<b>${fmtMoney(total)}</b></div><div>Con soporte<b>${fmtMoney(sumS)}</b></div><div>Sin soporte<b>${fmtMoney(total - sumS)}</b></div><div>Gastos<b>${movs.length}</b></div></div>
+<h2>Por mes</h2><table><tr><th>Mes</th><th class="n">Valor</th></tr>${Object.entries(meses).map(([k,v]) => `<tr><td>${esc(nombreMesFinca(k))}</td><td class="n">${fmtMoney(v)}</td></tr>`).join('')}</table>
+<h2>Por cuenta</h2><table><tr><th>Cuenta</th><th class="n">Valor</th></tr>${Object.entries(cuentas).sort((a,b) => b[1] - a[1]).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${fmtMoney(v)}</td></tr>`).join('')}</table>
+<h2>Detalle por fecha</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Cuenta</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(total)}</th><th></th></tr></table>
+</body></html>`;
+  const w = window.open(URL.createObjectURL(new Blob([html], { type:'text/html' })), '_blank');
+  if (!w) toast('Permite las ventanas emergentes para ver el informe');
+};
+
 /* Tarjeta en Dinero */
 function tarjetaPrestamo(){
   const p = proyectoPrincipal(); if (!p) return '';
@@ -4635,6 +4742,7 @@ function renderDinero(){
       <div class="fin-box fin-ingresos"><div class="fin-box-t">Ingresos</div><div class="fin-box-v" style="color:var(--g)">${fmtMoney(totalIngresos)}</div></div>
     </div>
     <div class="balance-card"><div class="balance-label">Balance real</div><div class="balance-val" style="color:${balance>=0?'var(--g)':'var(--rd)'}">${fmtMoney(balance)}</div></div>
+    ${tarjetaGastosFinca()}
     ${tarjetaPrestamo()}
     ${tarjetaLauro()}
     ${tarjetaCuentas()}
@@ -6356,7 +6464,7 @@ function render(){
 
   let content = '';
   if (S.tab === 'plagas' || S.tab === 'internet') S.tab = 'agente';
-  if (S.tab === 'dinero')    content = S.activeProyecto ? renderPrestamo() : renderDinero();
+  if (S.tab === 'dinero')    content = S.activeProyecto === 'finca' ? renderGastosFinca() : S.activeProyecto ? renderPrestamo() : renderDinero();
   if (S.tab === 'bodega')    content = renderBodega();
   if (S.tab === 'cultivos')  content = renderCultivos();
   if (S.tab === 'tareas')    content = renderTareas();
