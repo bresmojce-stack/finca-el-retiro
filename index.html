@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v13.0</title>
+<title>Finca El Retiro v13.1</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -651,9 +651,13 @@ const GEMINI_API_KEY = 'AIzaSyCapCmbtb4-Npc7Yc8zT_FstuECbO3mpHc';
 
 const SUPABASE_URL = 'https://sueramxzbibijuaamzbi.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_z94UVtLm_UN4rJUuGMGS4w_FwTc79Fc';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+/* Si la librería no cargó (sin señal y sin copia), la app sigue con los datos del teléfono */
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : (() => {
+  const falla = { data:null, error:{ message:'sin conexión (Failed to fetch)' }, status:0 };
+  const q = new Proxy({}, { get:(x, k) => k === 'then' ? (ok => Promise.resolve(falla).then(ok)) : () => q });
+  return { from:() => q, storage:{ from:(bk) => ({ upload:async () => falla, remove:async () => falla, getPublicUrl:(r) => ({ data:{ publicUrl: SUPABASE_URL + '/storage/v1/object/public/' + bk + '/' + r } }) }) }, channel:() => ({ on(){ return this; }, subscribe(){ return this; } }) };
+})();
 
-const QUEUE_KEY = 'finca_retiro_offline_queue';
 
 /* ESTRUCTURA MAESTRA DE LA BODEGA */
 const BODEGA_STRUCT = {
@@ -889,63 +893,202 @@ const Nav = {
   }
 };
 
-window.addEventListener('online',  ()=>{ S.isOnline=true;  render(); syncOfflineQueue(); });
+window.addEventListener('online',  ()=>{ S.isOnline=true;  render(); Sync.todo(); });
 window.addEventListener('offline', ()=>{ S.isOnline=false; render(); });
 
 /* ═══════════════════════════════════════════════════════════════
-   COLA OFFLINE
+   DATOS LOCALES PRIMERO (la app funciona sin internet)
+   - Todo cambio se guarda primero en el teléfono: se aplica a S.cache y entra a la
+     "bandeja de salida" (outbox). Cuando hay señal se sube, en orden.
+   - Cada fila nueva nace con su propio id, así que subirla dos veces no la duplica.
+   - Al bajar datos del servidor se vuelven a poner encima los cambios que aún no subieron.
+   - Si dos teléfonos cambian el mismo campo, queda el último que sube; se suben solo los campos cambiados.
+   - Nada se descarta solo: si el servidor rechaza un cambio, queda marcado y se puede reintentar o descartar.
+   - Otros teléfonos se enteran al instante (Supabase Realtime) o, si eso falla, cada minuto.
    ═══════════════════════════════════════════════════════════════ */
-function pushQueue(item){
-  const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-  q.push({...item, _retries: 0});
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+const TABLA_CACHE = { lotes:'lotes', inventario:'inventory', compras:'compras', ingresos:'ingresos', memoria_agente:'memoria', tareas:'tasks', bitacora:'activities',
+  coordenadas_lote:'coordenadas', ciclos_cultivo:'ciclos', plagas:'plagas', fotos:'fotos', cosechas:'cosechas', jornales:'jornales', proyectos:'proyectos', soportes:'soportes' };
+const OUTBOX_KEY = 'finca_outbox_v2';
+const IDB = {
+  _db: null,
+  abrir(){ if (this._db) return this._db; this._db = new Promise((ok, mal) => { try{ const r = indexedDB.open('finca-retiro', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => ok(r.result); r.onerror = () => mal(r.error); }catch(e){ mal(e); } }); return this._db; },
+  async _tx(modo, fn){ const db = await this.abrir(); return await new Promise((ok, mal) => { const tx = db.transaction('kv', modo), st = tx.objectStore('kv'); const r = fn(st); tx.oncomplete = () => ok(r && r.result); tx.onerror = () => mal(tx.error); }); },
+  async get(k){ try{ return await this._tx('readonly', st => st.get(k)); }catch(e){ return undefined; } },
+  async set(k, v){ try{ await this._tx('readwrite', st => st.put(v, k)); return true; }catch(e){ console.warn('IDB', e); return false; } },
+  async del(k){ try{ await this._tx('readwrite', st => st.delete(k)); }catch(e){} }
+};
+function nuevoId(tabla){ return tabla === 'ingresos' ? Date.now() * 1000 + Math.floor(Math.random() * 1000) : (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); })); }
+const Outbox = {
+  leer(){ try{ return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }catch(e){ return []; } },
+  guardar(q){ try{ localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); }catch(e){ toast('⚠️ El teléfono no tiene espacio para guardar cambios'); } },
+  agregar(op){ const q = this.leer(); q.push({ k: nuevoId(), ts: new Date().toISOString(), n: 0, ...op }); this.guardar(q); },
+  pendientes(){ return this.leer().length; },
+  conError(){ return this.leer().filter(o => o.err); }
+};
+/* Campos ligados que el servidor trae con la consulta (lote, responsable…) y que una fila nueva aún no tiene */
+function _ligar(t, f){
+  const lote = f.lote_id != null ? (S.cache.lotes || []).find(l => l.id === f.lote_id) : null;
+  if ('lote_id' in f && t !== 'compras' && t !== 'coordenadas_lote' && t !== 'proyectos') f.lote = lote ? { id:lote.id, codigo:lote.codigo, cultivo:lote.cultivo } : null;
+  const u = id => (S.cache.users || []).find(x => x.id === id);
+  if (t === 'bitacora' && 'responsable_id' in f) f.responsable = { nombre_corto: u(f.responsable_id)?.nombre_corto || '' };
+  if (t === 'tareas' && 'asignado_a_id' in f) f.asignado = f.asignado_a_id ? { codigo: u(f.asignado_a_id)?.codigo, nombre_corto: u(f.asignado_a_id)?.nombre_corto } : null;
+  if (t === 'plagas' && 'registrado_por' in f) f.registrado = { nombre_corto: u(f.registrado_por)?.nombre_corto || '' };
+  return f;
 }
-
-async function syncOfflineQueue(){
-  if (!S.isOnline) return;
-  let queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-  if (!queue.length) return;
-  const pending = [];
-  /* Mapa de IDs temporales (offline) → IDs reales (Supabase), para que
-     una acción hecha offline sobre algo creado offline no se pierda */
-  const idMap = {};
-  const realId = (id) => (id != null && idMap[id]) ? idMap[id] : id;
-  for (const item of queue){
-    try{
-      if (item.action==='add_compra')        await sb.from('compras').insert({...item.payload, lote_id: realId(item.payload?.lote_id)});
-      else if (item.action==='add_ingreso')  await sb.from('ingresos').insert(item.payload);
-      else if (item.action==='save_memory')  await sb.from('memoria_agente').insert(item.payload);
-      else if (item.action==='create_lote'){
-        const { data, error } = await sb.from('lotes').insert(item.payload).select().single();
-        if (error) throw error; if (item.tmpId && data) idMap[item.tmpId] = data.id;
+const _coincide = (x, f) => f.vals.some(v => String(x[f.col]) === String(v));
+function _aplicarLocal(o){
+  const key = TABLA_CACHE[o.t]; if (!key) return;
+  let arr = S.cache[key] = S.cache[key] || [];
+  if (o.op === 'insert') o.rows.forEach(r => {
+    const i = arr.findIndex(x => String(x.id) === String(r.id));
+    const f = _ligar(o.t, { ...(i >= 0 ? arr[i] : { creado_en: o.ts, fecha: o.ts }), ...r, _pendiente: true });
+    if (i >= 0) arr[i] = f; else arr.unshift(f);
+  });
+  else if (o.op === 'update') arr.forEach((x, i) => { if (_coincide(x, o.f)) arr[i] = _ligar(o.t, { ...x, ...o.changes, _pendiente: true }); });
+  else if (o.op === 'delete') S.cache[key] = arr.filter(x => !_coincide(x, o.f));
+  if (o.t === 'lotes') S.cache.lotes = S.cache.lotes.filter(l => l.activo !== false);
+}
+/* Constructor parecido al de Supabase para escribir: db.from('compras').insert(fila).select().single() */
+const db = {
+  from(t){
+    const st = { t, op:null, rows:null, changes:null, f:null, single:false };
+    const ejecutar = () => {
+      let res = { data:null, error:null };
+      if (st.op === 'insert'){
+        const rows = st.rows.map(r => ({ ...r, id: r.id ?? nuevoId(t) }));
+        const o = { t, op:'insert', rows }; _aplicarLocal({ ...o, ts:new Date().toISOString() }); Outbox.agregar(o);
+        res.data = st.single ? rows[0] : rows;
+      } else if (st.op === 'update' || st.op === 'delete'){
+        if (!st.f) return { data:null, error:{ message:'Falta indicar qué fila' } };
+        const o = { t, op:st.op, f:st.f, ...(st.op === 'update' ? { changes:st.changes } : {}) };
+        _aplicarLocal(o); Outbox.agregar(o);
       }
-      else if (item.action==='add_inventory'){
-        const { data, error } = await sb.from('inventario').insert(item.payload).select().single();
-        if (error) throw error; if (item.tmpId && data) idMap[item.tmpId] = data.id;
+      Local.cambio();
+      return res;
+    };
+    const b = {
+      insert(v){ st.op = 'insert'; st.rows = Array.isArray(v) ? v : [v]; return b; },
+      update(v){ st.op = 'update'; st.changes = v; return b; },
+      delete(){ st.op = 'delete'; return b; },
+      eq(col, val){ st.f = { col, vals:[val] }; return b; },
+      in(col, vals){ st.f = { col, vals:[...vals] }; return b; },
+      select(){ return b; },
+      single(){ st.single = true; return b; },
+      then(ok, mal){ let r; try{ r = ejecutar(); }catch(e){ r = { data:null, error:{ message:e.message } }; } return Promise.resolve(r).then(ok, mal); }
+    };
+    return b;
+  },
+  /* Archivos (fotos y soportes): se guardan en el teléfono y se suben cuando hay señal */
+  async subirArchivo(bucket, ruta, blob, tipo){
+    const llave = 'blob:' + bucket + '/' + ruta;
+    if (!(await IDB.set(llave, blob))) return { error:{ message:'No se pudo guardar el archivo en el teléfono' } };
+    Outbox.agregar({ op:'upload', bucket, ruta, llave, ct:tipo });
+    Local.blobs[llave] = URL.createObjectURL(blob);
+    Local.cambio();
+    return { error:null, url: sb.storage.from(bucket).getPublicUrl(ruta).data.publicUrl };
+  },
+  borrarArchivo(bucket, ruta){ Outbox.agregar({ op:'remove', bucket, ruta }); Local.cambio(); }
+};
+const Local = {
+  blobs: {}, estado:'', _t:null,
+  /* Guarda la copia del teléfono (con una pequeña espera para no escribir a cada rato) y avisa que hay que subir */
+  cambio(){ clearTimeout(this._t); this._t = setTimeout(() => this.guardarCopia(), 400); Sync.pronto(); },
+  async guardarCopia(){ await IDB.set('cache', S.cache); try{ localStorage.setItem('finca_users', JSON.stringify(S.cache.users || [])); }catch(e){} },
+  async cargarCopia(){
+    const c = await IDB.get('cache');
+    if (c && typeof c === 'object') Object.keys(S.cache).forEach(k => { if (Array.isArray(c[k])) S.cache[k] = c[k]; });
+    Outbox.leer().forEach(_aplicarLocal);
+    for (const o of Outbox.leer()) if (o.op === 'upload' && !this.blobs[o.llave]){ const b = await IDB.get(o.llave); if (b) this.blobs[o.llave] = URL.createObjectURL(b); }
+    return !!c;
+  },
+  /* URL que se ve en pantalla: si el archivo aún no subió, se muestra la copia del teléfono */
+  url(u){ if (!u) return u; for (const k in this.blobs){ if (u.endsWith(k.replace(/^blob:[^/]+\//, ''))) return this.blobs[k]; } return u; }
+};
+const _esFallaDeRed = (e, status) => !status || status >= 500 || status === 408 || status === 429 || /fetch|network|load failed|timeout/i.test(e?.message || '');
+const Sync = {
+  corriendo:false, ultimo:0, fallo:'', _t:null,
+  pronto(){ clearTimeout(this._t); this._t = setTimeout(() => this.todo(), 800); },
+  async subir(){
+    let q = Outbox.leer(); if (!q.length) return 0;
+    let subidos = 0;
+    for (const o of q){
+      let error = null, status = 200;
+      try{
+        if (o.op === 'insert'){
+          const filas = o.rows.map(r => { const x = {}; Object.keys(r).forEach(k => { if (k[0] !== '_') x[k] = r[k]; }); return x; });
+          ({ error, status } = await sb.from(o.t).upsert(filas, { onConflict:'id', ignoreDuplicates:true }));
+        } else if (o.op === 'update') ({ error, status } = await sb.from(o.t).update(o.changes).in(o.f.col, o.f.vals));
+        else if (o.op === 'delete') ({ error, status } = await sb.from(o.t).delete().in(o.f.col, o.f.vals));
+        else if (o.op === 'upload'){
+          const blob = await IDB.get(o.llave);
+          if (blob){ const r = await sb.storage.from(o.bucket).upload(o.ruta, blob, { contentType:o.ct, upsert:false }); error = r.error; status = r.error?.statusCode ? +r.error.statusCode : (r.error ? 0 : 200);
+            if (error && /exist|duplicate/i.test(error.message || '')) error = null; }
+        } else if (o.op === 'remove'){ const r = await sb.storage.from(o.bucket).remove([o.ruta]); error = r.error; status = r.error ? 0 : 200; }
+      }catch(e){ error = e; status = 0; }
+      if (!error){
+        if (o.op === 'upload'){ await IDB.del(o.llave); }
+        q = Outbox.leer().filter(x => x.k !== o.k); Outbox.guardar(q); subidos++;
+        continue;
       }
-      else if (item.action==='update_inventory')  await sb.from('inventario').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='log_activity')      await sb.from('bitacora').insert({...item.payload, lote_id: realId(item.payload?.lote_id)});
-      else if (item.action==='create_task'){
-        const { data, error } = await sb.from('tareas').insert({...item.payload, lote_id: realId(item.payload?.lote_id)}).select().single();
-        if (error) throw error; if (item.tmpId && data) idMap[item.tmpId] = data.id;
-      }
-      else if (item.action==='complete_task')     await sb.from('tareas').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_inventory')    await sb.from('inventario').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_lote')         await sb.from('lotes').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_task')         await sb.from('tareas').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_activity')     await sb.from('bitacora').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_gasto')        await sb.from('compras').update(item.payload).eq('id', realId(item.id));
-      else if (item.action==='edit_ingreso')      await sb.from('ingresos').update(item.payload).eq('id', realId(item.id));
-    } catch(e){
-      item._retries = (item._retries||0) + 1;
-      if (item._retries < 5) pending.push(item);
-      else console.warn('Item descartado tras 5 reintentos:', item);
+      if (_esFallaDeRed(error, status)){ this.fallo = 'sin señal'; break; }  // se reintenta en la próxima
+      /* El servidor lo rechazó: se marca, se sigue con lo demás y NUNCA se bota solo */
+      q = Outbox.leer(); const it = q.find(x => x.k === o.k); if (it){ it.err = error.message || String(error); it.n = (it.n || 0) + 1; Outbox.guardar(q); }
     }
+    return subidos;
+  },
+  async todo(){
+    if (this.corriendo){ this._otra = true; return; }
+    if (!navigator.onLine){ S.isOnline = false; render(); return; }
+    this.corriendo = true; this.fallo = '';
+    try{
+      const antes = Outbox.pendientes();
+      const n = await this.subir();
+      if (!this.fallo) await refreshAll();
+      if (n && antes) toast(`☁️ ${n} cambio(s) subido(s)`);
+      if (Outbox.conError().length && !this._avisado){ this._avisado = true; toast('⚠️ Hay cambios que no se pudieron subir. Toca la nube arriba para verlos.'); }
+    } finally { this.corriendo = false; render(); if (this._otra){ this._otra = false; this.pronto(); } }
+  },
+  iniciar(){
+    if (this._listo) return; this._listo = true;
+    setInterval(() => { if (document.visibilityState === 'visible' && S.user) this.todo(); }, 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.user) this.todo(); });
+    try{
+      let t = null;
+      sb.channel('cambios-finca').on('postgres_changes', { event:'*', schema:'public' }, () => { clearTimeout(t); t = setTimeout(() => { if (!this.corriendo && !Outbox.pendientes()) refreshAll().then(() => render()); }, 1500); }).subscribe();
+    }catch(e){ console.warn('Realtime no disponible', e); }
   }
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(pending));
-  if (queue.length > pending.length) toast(`Sincronizados ${queue.length - pending.length} cambios`);
-  await refreshAll(); render();
-}
+};
+/* Lo que quedó en la cola vieja (versiones anteriores) pasa a la bandeja nueva */
+(function migrarColaVieja(){
+  const OLD = 'finca_retiro_offline_queue';
+  let q; try{ q = JSON.parse(localStorage.getItem(OLD) || '[]'); }catch(e){ q = []; }
+  if (!q.length) return;
+  const T = { add_compra:'compras', add_ingreso:'ingresos', save_memory:'memoria_agente', create_lote:'lotes', add_inventory:'inventario', update_inventory:'inventario', log_activity:'bitacora', create_task:'tareas',
+    complete_task:'tareas', edit_inventory:'inventario', edit_lote:'lotes', edit_task:'tareas', edit_activity:'bitacora', edit_gasto:'compras', edit_ingreso:'ingresos' };
+  const tmp = {};
+  q.forEach(it => {
+    const t = T[it.action]; if (!t) return;
+    if (/^(add|save|create|log)_/.test(it.action)){ const id = nuevoId(t); if (it.tmpId) tmp[it.tmpId] = id; const row = { ...it.payload, id }; if (row.lote_id && tmp[row.lote_id]) row.lote_id = tmp[row.lote_id]; Outbox.agregar({ t, op:'insert', rows:[row] }); }
+    else Outbox.agregar({ t, op:'update', f:{ col:'id', vals:[tmp[it.id] || it.id] }, changes: it.payload });
+  });
+  localStorage.removeItem(OLD);
+})();
+/* Pantalla de cambios por subir: reintentar o descartar */
+window.verPendientes = async function(){
+  const q = Outbox.leer();
+  const nombre = o => ({ insert:'Nuevo', update:'Cambio', delete:'Borrado', upload:'Archivo', remove:'Borrar archivo' }[o.op] || o.op) + ' · ' + (o.t || o.bucket || '');
+  const desc = o => o.op === 'insert' ? (o.rows[0]?.concepto || o.rows[0]?.actividad || o.rows[0]?.titulo || o.rows[0]?.descripcion || o.rows[0]?.trabajador || o.rows[0]?.nombre || '') : o.op === 'upload' ? o.ruta.split('/').pop() : '';
+  const html = `<div class="modal-h"><i class="ti ti-cloud-upload"></i> Cambios por subir (${q.length})</div>
+    <div class="modal-sub">${S.isOnline ? 'Se suben solos cuando hay señal.' : 'Sin señal: están guardados en este teléfono y se suben solos cuando vuelva la señal.'}${Sync.ultimo ? ' Última sincronización: ' + new Date(Sync.ultimo).toLocaleTimeString('es-CO', { hour:'2-digit', minute:'2-digit' }) + '.' : ''}</div>
+    <div class="asig-lista">${q.length ? q.map(o => `<div class="asig-fila" style="display:block"><b>${esc(nombre(o))}</b> ${esc(desc(o))}<br><span class="text-tiny">${fmtFecha(o.ts)}${o.err ? ` · <b style="color:var(--rd)">No se pudo subir: ${esc(o.err)}</b> <button class="btn btn-sm btn-ghost" style="color:var(--rd)" onclick="descartarPendiente('${o.k}')">Descartar</button>` : ''}</span></div>`).join('') : '<div class="text-tiny" style="padding:12px">Todo está subido.</div>'}</div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="M._close(null)">Cerrar</button>${q.length ? `<button class="btn btn-primary" onclick="M._close(null); Sync.todo()"><i class="ti ti-refresh"></i> Subir ahora</button>` : `<button class="btn btn-primary" onclick="M._close(null); Sync.todo()"><i class="ti ti-refresh"></i> Actualizar</button>`}</div>`;
+  M._open(html);
+};
+window.descartarPendiente = async function(k){
+  const ok = await M.confirm({ title:'Descartar cambio', body:'Este cambio no se subirá y se perderá. ¿Seguro?', okText:'Sí, descartar', cancelText:'Cancelar', danger:true });
+  if (!ok) return;
+  Outbox.guardar(Outbox.leer().filter(x => x.k !== k)); await refreshAll(); render(); verPendientes();
+};
 
 /* ═══════════════════════════════════════════════════════════════
    HANDLERS DE DATOS (CON MANEJO DE ERRORES Y BORRADO)
@@ -953,8 +1096,7 @@ async function syncOfflineQueue(){
 const HANDLERS = {
   save_memory: async (i) => {
     const payload = { contenido: i.contenido, tipo: 'aprendizaje', tema: 'general', fecha: ahoraLocalISO() };
-    if (!S.isOnline){ pushQueue({action:'save_memory', payload}); S.cache.memoria.unshift(payload); return {success:true, msg:'Aprendizaje guardado (offline)'}; }
-    const { error } = await sb.from('memoria_agente').insert(payload);
+    const { error } = await db.from('memoria_agente').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     return {success:true, msg:'Guardado en la memoria'};
   },
@@ -964,18 +1106,14 @@ const HANDLERS = {
     else { const pr = proyectoDeLote(payload.lote_id); if (pr){ payload.proyecto_id = pr.id; payload.rubro = i.rubro || rubroDeTexto(i.concepto); } }
     if (i.proveedor) payload.proveedor = i.proveedor;
     if (i.cantidad) { payload.cantidad = i.cantidad; payload.unidad = i.unidad || null; }
-    if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); return {success:true, msg:'Gasto registrado (offline)'}; }
-    const { data, error } = await sb.from('compras').insert(payload).select('id').single();
+    const { data, error } = await db.from('compras').insert(payload).select('id').single();
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Gasto registrado', id: data?.id};
   },
   add_ingreso: async (i) => {
     const payload = { concepto:i.concepto, valor_total:i.valor_total, fecha: tsDeDia(i.fecha) };
-    if (!S.isOnline){ pushQueue({action:'add_ingreso', payload}); S.cache.ingresos.unshift(payload); return {success:true, msg:'Ingreso registrado (offline)'}; }
-    const { error } = await sb.from('ingresos').insert(payload); 
+    const { error } = await db.from('ingresos').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Ingreso registrado'};
   },
   add_inventory: async (i) => {
@@ -995,14 +1133,8 @@ const HANDLERS = {
         payload.ultimo_precio = parseFloat(i.cantidad) > 0 ? parseFloat(i.precio_total) / parseFloat(i.cantidad) : 0;
         payload.ultimo_precio_fecha = fechaLocalISO();
       }
-      if (!S.isOnline){
-        existing.cantidad_actual = nuevaActual; existing.total_ingresado = nuevoTotal;
-        pushQueue({action:'update_inventory', id:existing.id, payload});
-        return {success:true, msg:`Stock actualizado: +${i.cantidad} ${i.unidad||''} a "${existing.descripcion}"`};
-      }
-      const { error } = await sb.from('inventario').update(payload).eq('id', existing.id);
+      const { error } = await db.from('inventario').update(payload).eq('id', existing.id);
       if (error) return {success:false, msg:'Error BD: ' + error.message};
-      await refreshAll();
       return {success:true, msg:`Stock actualizado: +${i.cantidad} ${i.unidad||''} a "${existing.descripcion}"`};
     }
 
@@ -1023,13 +1155,11 @@ const HANDLERS = {
       franja_toxicologica: i.franja_toxicologica || null,
       fecha_vencimiento: i.fecha_vencimiento || null
     };
-    if (!S.isOnline){ const _tmp='tmp-'+Date.now(); pushQueue({action:'add_inventory', payload, tmpId:_tmp}); S.cache.inventory.unshift({...payload, id:_tmp}); return {success:true, isNew:true, msg:'Insumo guardado (offline)'}; }
-    const { error } = await sb.from('inventario').insert(payload); 
+    const { error } = await db.from('inventario').insert(payload); 
     if (error) {
       console.error(error);
       return {success:false, msg:`Verifica que las columnas 'subcategoria', 'detalles', 'precio_total', 'costo_unitario' y 'ficha_investigacion' estén en la tabla INVENTARIO. Detalle exacto: ${error.message}`};
     }
-    await refreshAll();
     return {success:true, isNew:true, msg:'Insumo agregado a la bodega'};
   },
   use_inventory: async (i) => {
@@ -1037,44 +1167,28 @@ const HANDLERS = {
     if (!item) return {success:false, msg:'No encontrado'};
     const nuevaCant = Math.max(0, parseFloat(item.cantidad_actual) - parseFloat(i.cantidad_descontar));
     const payload = { cantidad_actual: nuevaCant };
-    if (!S.isOnline){
-      item.cantidad_actual = nuevaCant;
-      pushQueue({action:'update_inventory', id:item.id, payload});
-      return {success:true};
-    }
-    const { error } = await sb.from('inventario').update(payload).eq('id', i.id); 
+    const { error } = await db.from('inventario').update(payload).eq('id', i.id); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_inventory: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión a internet para borrar insumos'};
-    const { error } = await sb.from('inventario').delete().eq('id', id);
+    const { error } = await db.from('inventario').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   log_activity: async (i) => {
     if (!S.user || !S.user.dbId) return {success:false, msg:'Sin usuario'};
     const payload = { lote_id:i.lote_id||null, responsable_id:S.user.dbId, actividad:i.actividad, fecha: tsDeDia(i.fecha) };
-    if (!S.isOnline){
-      pushQueue({action:'log_activity', payload});
-      S.cache.activities.unshift({...payload, responsable:{nombre_corto:S.user.display}, lote:i.codigo?{codigo:i.codigo}:null});
-      return {success:true, msg:'Apunte guardado (offline)'};
-    }
-    const { error } = await sb.from('bitacora').insert(payload); 
+    const { error } = await db.from('bitacora').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Apunte registrado'};
   },
   create_lote: async (i) => {
     if (!i.codigo || !i.cultivo) return {success:false, msg:'Falta código o cultivo'};
     const payload = { codigo:i.codigo, cultivo:i.cultivo, variedad:i.variedad||null, ambiente:i.ambiente||'abierto', estado:'planificación', activo:true, fecha_siembra:i.fecha_siembra||null, ciclo_dias:i.ciclo_dias||null, notas:i.notas||null,
       siembra_cantidad: i.siembra_cantidad || null, siembra_unidad: i.siembra_cantidad ? (i.siembra_unidad || null) : null };
-    if (!S.isOnline){ const _tmp='tmp-'+Date.now(); pushQueue({action:'create_lote', payload, tmpId:_tmp}); S.cache.lotes.push({...payload, id:_tmp}); return {success:true, msg:'Lote creado (offline)'}; }
-    const { error } = await sb.from('lotes').insert(payload); 
+    const { error } = await db.from('lotes').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Lote creado'};
   },
   create_task: async (i) => {
@@ -1092,35 +1206,19 @@ const HANDLERS = {
       if (l) loteId = l.id;
     }
     const payload = { titulo:i.titulo, estado:'pendiente', asignado_a_id:asignado_id, asignado_a_todos:a_todos, fecha_limite:i.fecha_limite||null, lote_id:loteId, creado_por_id:S.user.dbId };
-    if (!S.isOnline){
-      const _tmp='tmp-'+Date.now();
-      pushQueue({action:'create_task', payload, tmpId:_tmp});
-      S.cache.tasks.unshift({...payload, id:_tmp, lote: S.cache.lotes.find(l=>l.id===loteId)});
-      return {success:true, msg:'Tarea programada (offline)'};
-    }
-    const { error } = await sb.from('tareas').insert(payload); 
+    const { error } = await db.from('tareas').insert(payload); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Tarea programada'};
   },
   complete_task: async (id) => {
     const payload = { estado: 'completada' };
-    if (!S.isOnline){
-      const t = S.cache.tasks.find(x => x.id == id);
-      if (t) t.estado = 'completada';
-      pushQueue({action:'complete_task', id, payload});
-      return {success:true};
-    }
-    const { error } = await sb.from('tareas').update(payload).eq('id', id); 
+    const { error } = await db.from('tareas').update(payload).eq('id', id); 
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_task: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión a internet para borrar tareas'};
-    const { error } = await sb.from('tareas').delete().eq('id', id);
+    const { error } = await db.from('tareas').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   set_precio: async (id, precioUnit) => {
@@ -1133,17 +1231,13 @@ const HANDLERS = {
       ultimo_precio: precioUnit,
       ultimo_precio_fecha: fechaLocalISO()
     };
-    if (!S.isOnline){ Object.assign(item, payload); pushQueue({action:'update_inventory', id, payload}); return {success:true}; }
-    const { error } = await sb.from('inventario').update(payload).eq('id', id);
+    const { error } = await db.from('inventario').update(payload).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_inventory: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('inventario').update(changes).eq('id', id);
+    const { error } = await db.from('inventario').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   restock_inventory: async (id, cantidadAgregar, precioCompra = 0) => {
@@ -1161,163 +1255,132 @@ const HANDLERS = {
       item.precio_total = precioAcum; item.costo_unitario = payload.costo_unitario;
       item.ultimo_precio = payload.ultimo_precio; item.ultimo_precio_fecha = payload.ultimo_precio_fecha;
     }
-    if (!S.isOnline){
-      item.cantidad_actual = nuevaActual; item.total_ingresado = nuevoTotal;
-      pushQueue({action:'update_inventory', id, payload});
-      return {success:true};
-    }
-    const { error } = await sb.from('inventario').update(payload).eq('id', id);
+    const { error } = await db.from('inventario').update(payload).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_lote: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('lotes').update(changes).eq('id', id);
+    const { error } = await db.from('lotes').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_activity: async (id, cambios) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
     const upd = (typeof cambios === 'string') ? { actividad: cambios } : { ...cambios };
     if (upd.fecha) upd.fecha = tsDeDia(upd.fecha); else delete upd.fecha;
-    const { error } = await sb.from('bitacora').update(upd).eq('id', id);
+    const { error } = await db.from('bitacora').update(upd).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_activity: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('bitacora').delete().eq('id', id);
+    const { error } = await db.from('bitacora').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_task: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('tareas').update(changes).eq('id', id);
+    const { error } = await db.from('tareas').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_jornal: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
     const total = (parseFloat(changes.dias)||0) * (parseFloat(changes.valor_dia)||0);
     const j = S.cache.jornales.find(x=>x.id==id);
     const updJ = { trabajador:changes.trabajador, dias:changes.dias, valor_dia:changes.valor_dia, valor_total:total, lote_id:changes.lote_id||null, nota:changes.nota||null };
     if (changes.fecha) updJ.fecha = changes.fecha;
-    const { error } = await sb.from('jornales').update(updJ).eq('id', id);
+    const { error } = await db.from('jornales').update(updJ).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_jornal: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('jornales').delete().eq('id', id);
+    const { error } = await db.from('jornales').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_cosecha: async (id, changes, flete) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('cosechas').update(changes).eq('id', id);
+    const { error } = await db.from('cosechas').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    if (flete !== undefined){ const rf = await HANDLERS.guardar_flete({ ...(flete || { valor_total:0 }), cosecha_id:id }); if (!rf.success){ await refreshAll(); return rf; } }
-    await refreshAll();
+    if (flete !== undefined){ const rf = await HANDLERS.guardar_flete({ ...(flete || { valor_total:0 }), cosecha_id:id }); if (!rf.success) return rf; }
     return {success:true};
   },
   delete_cosecha: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('cosechas').delete().eq('id', id);
+    const { error } = await db.from('cosechas').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_consumo: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('compras').update(changes).eq('id', id);
+    const { error } = await db.from('compras').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_consumo: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('compras').delete().eq('id', id);
+    const { error } = await db.from('compras').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_foto: async (id, nota) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('fotos').update({ nota }).eq('id', id);
+    const { error } = await db.from('fotos').update({ nota }).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_gasto: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('compras').update(changes).eq('id', id);
+    const { error } = await db.from('compras').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_gasto: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('compras').delete().eq('id', id);
+    /* Si la fila tiene la factura de varias filas, la factura pasa a otra fila de la misma factura; si no, se borra con el gasto */
+    const c = (S.cache.compras || []).find(x => x.id === id), sops = (S.cache.soportes || []).filter(s => s.compra_id === id);
+    if (sops.length){
+      const otra = c?.numero_factura ? (S.cache.compras || []).find(x => x.id !== id && x.numero_factura === c.numero_factura && (x.proveedor || '') === (c.proveedor || '')) : null;
+      if (otra) await db.from('soportes').update({ compra_id: otra.id }).in('id', sops.map(s => s.id));
+      else {
+        await db.from('soportes').delete().in('id', sops.map(s => s.id));
+        sops.forEach(s => { if (s.ruta && !(S.cache.soportes || []).some(x => x.ruta === s.ruta)) db.borrarArchivo('soportes', s.ruta); });
+      }
+    }
+    const { error } = await db.from('compras').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_ingreso: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
     const upd = { ...changes };
     if (upd.fecha) upd.fecha = tsDeDia(upd.fecha); else delete upd.fecha;
-    const { error } = await sb.from('ingresos').update(upd).eq('id', id);
+    const { error } = await db.from('ingresos').update(upd).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_ingreso: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('ingresos').delete().eq('id', id);
+    const { error } = await db.from('ingresos').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   registrar_cosecha: async (i) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar cosechas'};
     const payload = { lote_id:i.lote_id||null, volumen_kg:i.kilos, calidad:i.calidad||'normal', observaciones:i.observaciones||null, fecha_recoleccion:i.fecha||fechaLocalISO(), registrado_por_id:S.user?.dbId||null,
       unidad: i.unidad || null, unidades: i.unidades != null ? i.unidades : null, peso_unidad: i.peso_unidad != null ? i.peso_unidad : null, precio_unidad: i.precio_unidad || null };
-    const { data, error } = await sb.from('cosechas').insert(payload).select('id').single();
+    const { data, error } = await db.from('cosechas').insert(payload).select('id').single();
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     let aviso = '';
     if (i.flete && data?.id){ const rf = await HANDLERS.guardar_flete({ ...i.flete, cosecha_id:data.id }); if (!rf.success) aviso = ' · ⚠️ flete sin guardar: ' + rf.msg; }
-    await refreshAll();
     return {success:true, msg:'Cosecha registrada' + aviso, id:data?.id};
   },
   /* Flete: lo que se paga por bajar la carga. Va como gasto de Transporte del lote (ligado a la cosecha si se anotó con ella). Valor 0 = quitarlo */
   guardar_flete: async (f) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar el flete'};
     const prev = f.id || (f.cosecha_id ? (S.cache.compras || []).find(c => c.cosecha_id === f.cosecha_id)?.id : null);
     if (!(f.valor_total > 0)){
       if (!prev) return {success:true};
-      const { error } = await sb.from('compras').delete().eq('id', prev);
+      const { error } = await db.from('compras').delete().eq('id', prev);
       return error ? {success:false, msg:'Error BD: ' + error.message} : {success:true};
     }
     const payload = { concepto:f.concepto, categoria:'Transporte', valor_total:f.valor_total, cantidad:f.cantidad || null, unidad:f.unidad || null, lote_id:f.lote_id || null,
       fecha_compra:f.fecha || fechaLocalISO(), proveedor:f.proveedor || null, origen:'manual', cosecha_id:f.cosecha_id || null };
     { const pr = proyectoDeLote(payload.lote_id); payload.proyecto_id = pr?.id || null; if (pr) payload.rubro = 'Transporte'; }
-    const { error } = prev ? await sb.from('compras').update(payload).eq('id', prev) : await sb.from('compras').insert(payload);
+    const { error } = prev ? await db.from('compras').update(payload).eq('id', prev) : await db.from('compras').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     return {success:true};
   },
   registrar_jornal: async (i) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar jornales'};
     const total = (parseFloat(i.dias)||0) * (parseFloat(i.valor_dia)||0);
-    const { error } = await sb.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null, ...((i.proyecto_id || proyectoDeLote(i.lote_id)?.id) ? { proyecto_id: i.proyecto_id || proyectoDeLote(i.lote_id).id } : {}) });
+    const { error } = await db.from('jornales').insert({ trabajador:i.trabajador, dias:i.dias, valor_dia:i.valor_dia, valor_total:total, lote_id:i.lote_id||null, nota:i.nota||null, fecha:i.fecha||fechaLocalISO(), registrado_por:S.user?.dbId||null, ...((i.proyecto_id || proyectoDeLote(i.lote_id)?.id) ? { proyecto_id: i.proyecto_id || proyectoDeLote(i.lote_id).id } : {}) });
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Jornal registrado', total};
   },
   registrar_plaga: async (i) => {
@@ -1331,14 +1394,11 @@ const HANDLERS = {
       activa: true,
       registrado_por: S.user.dbId
     };
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para registrar plagas'};
-    const { error } = await sb.from('plagas').insert(payload);
+    const { error } = await db.from('plagas').insert(payload);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Plaga registrada'};
   },
   controlar_plaga: async (id, control) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión'};
     const payload = {
       fecha_control: control.fecha||fechaLocalISO(),
       producto_usado: control.producto||'',
@@ -1346,44 +1406,33 @@ const HANDLERS = {
       resultado: control.resultado||'',
       activa: control.resultado?.toLowerCase().includes('control') || control.resultado?.toLowerCase().includes('erradica') ? false : true
     };
-    const { error } = await sb.from('plagas').update(payload).eq('id', id);
+    const { error } = await db.from('plagas').update(payload).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true, msg:'Control registrado'};
   },
   cerrar_plaga: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión'};
-    const { error } = await sb.from('plagas').update({ activa:false }).eq('id', id);
+    const { error } = await db.from('plagas').update({ activa:false }).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_plaga: async (id, changes) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('plagas').update(changes).eq('id', id);
+    const { error } = await db.from('plagas').update(changes).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   edit_memoria: async (id, contenido) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para editar'};
-    const { error } = await sb.from('memoria_agente').update({ contenido }).eq('id', id);
+    const { error } = await db.from('memoria_agente').update({ contenido }).eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_memoria: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión para borrar'};
-    const { error } = await sb.from('memoria_agente').delete().eq('id', id);
+    const { error } = await db.from('memoria_agente').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   },
   delete_plaga: async (id) => {
-    if (!S.isOnline) return {success:false, msg:'Necesitas conexión'};
-    const { error } = await sb.from('plagas').delete().eq('id', id);
+    const { error } = await db.from('plagas').delete().eq('id', id);
     if (error) return {success:false, msg:'Error BD: ' + error.message};
-    await refreshAll();
     return {success:true};
   }
 };
@@ -1413,8 +1462,7 @@ async function consumirInsumo({ itemId, cantidad, loteId = null }){
     const lote = loteId ? S.cache.lotes.find(l => l.id == loteId) : null;
     const payload = { concepto:`Consumo: ${usar} ${unidad} de ${descItem}`.replace('  ',' '), categoria:item.categoria||'otro', valor_total:costo, lote_id:loteId||null, origen:'consumo', fecha_compra: fechaLocalISO() };
     { const pr = proyectoDeLote(loteId); if (pr){ payload.proyecto_id = pr.id; payload.rubro = 'Materiales'; } }
-    if (!S.isOnline){ pushQueue({action:'add_compra', payload}); S.cache.compras.unshift(payload); }
-    else { try{ const { error } = await sb.from('compras').insert(payload); if(error) console.warn('No se pudo registrar costo:', error.message); else await refreshAll(); } catch(e){} }
+    await db.from('compras').insert(payload);
   }
   return { success:true, usado:usar, costo, restante:Math.max(0, disponible-usar), capped, descripcion:descItem, unidad };
 }
@@ -1422,14 +1470,18 @@ async function consumirInsumo({ itemId, cantidad, loteId = null }){
 /* ═══════════════════════════════════════════════════════════════
    CARGA INICIAL
    ═══════════════════════════════════════════════════════════════ */
+function _ponerUsuarios(data){
+  S.users = data.map(u => ({ id:u.codigo, dbId:u.id, display:u.nombre_corto, fullName:u.nombre_completo, color: /^#[0-9a-fA-F]{3,8}$/.test(u.color||'') ? u.color : null }));
+  S.cache.users = data;
+}
+/* Usuarios: primero la copia del teléfono (abre sin señal), luego la del servidor */
 async function loadUsers(){
+  try{ const loc = JSON.parse(localStorage.getItem('finca_users') || '[]'); if (loc.length) _ponerUsuarios(loc); }catch(e){}
   try{
-    const { data } = await sb.from('usuarios').select('*').eq('activo', true).order('rol');
-    if (data){
-      S.users = data.map(u => ({ id:u.codigo, dbId:u.id, display:u.nombre_corto, fullName:u.nombre_completo, color: /^#[0-9a-fA-F]{3,8}$/.test(u.color||'') ? u.color : null }));
-      S.cache.users = data;
-    }
+    const { data, error } = await sb.from('usuarios').select('*').eq('activo', true).order('rol');
+    if (!error && data && data.length){ _ponerUsuarios(data); try{ localStorage.setItem('finca_users', JSON.stringify(data)); }catch(e){} }
   } catch(e){ console.warn('Sin red al cargar usuarios'); }
+  if (!S.users.length) S.sinUsuarios = true;
 }
 
 /* Trae todas las filas de una consulta, de 1000 en 1000 (Supabase entrega máx. 1000 por vez) */
@@ -1437,48 +1489,42 @@ async function traerTodo(armar){
   const todas = [];
   for (let pag = 0; pag < 50; pag++){
     const { data, error } = await armar().range(pag*1000, pag*1000 + 999);
-    if (error) return { data: todas.length ? todas : null, error };
+    if (error) return { data: null, error };   // una página fallida = no se cambia nada (evita totales incompletos)
     todas.push(...(data||[]));
     if (!data || data.length < 1000) break;
   }
   return { data: todas, error: null };
 }
 
+/* Baja todo del servidor. Si una consulta falla se conservan los datos que ya había (nunca se deja en blanco),
+   y encima se vuelven a poner los cambios del teléfono que aún no han subido. */
 async function refreshAll(){
-  try{
-    const [lotes, inv, compras, ingresos, memoria, tasks, acts, coords, ciclos, plagas, fotos, cosechas, jornales, proyectos, soportes] = await Promise.all([
-      sb.from('lotes').select('*').eq('activo', true),
-      sb.from('inventario').select('*').order('descripcion'),
-      traerTodo(() => sb.from('compras').select('*').order('fecha_compra', { ascending:false }).order('id')),
-      traerTodo(() => sb.from('ingresos').select('*').order('fecha', { ascending:false }).order('id')),
-      sb.from('memoria_agente').select('*').order('fecha', { ascending:false }).limit(20),
-      sb.from('tareas').select('*, asignado:usuarios!asignado_a_id(codigo,nombre_corto), lote:lotes(codigo,cultivo,id)').order('creado_en', { ascending:false }),
-      traerTodo(() => sb.from('bitacora').select('*, responsable:usuarios!responsable_id(nombre_corto), lote:lotes(codigo,cultivo)').order('fecha', { ascending:false }).order('id')),
-      sb.from('coordenadas_lote').select('*').order('orden', { ascending:true }),
-      sb.from('ciclos_cultivo').select('*').order('cultivo'),
-      sb.from('plagas').select('*, lote:lotes(codigo,cultivo), registrado:usuarios!registrado_por(nombre_corto)').order('creado_en', { ascending:false }),
-      sb.from('fotos').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).limit(300),
-      traerTodo(() => sb.from('cosechas').select('*, lote:lotes(codigo,cultivo)').order('fecha_recoleccion', { ascending:false }).order('id')),
-      traerTodo(() => sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).order('id')),
-      sb.from('proyectos').select('*').order('creado_en'),
-      traerTodo(() => sb.from('soportes').select('*').order('creado_en').order('id'))
-    ]);
-    S.cache.lotes       = lotes.data    || [];
-    S.cache.inventory   = inv.data      || [];
-    S.cache.compras     = compras.data  || [];
-    S.cache.ingresos    = ingresos.data || [];
-    S.cache.memoria     = memoria.data  || [];
-    S.cache.tasks       = tasks.data    || [];
-    S.cache.activities  = acts.data     || [];
-    S.cache.coordenadas = coords.data   || [];
-    S.cache.ciclos      = ciclos.data   || [];
-    S.cache.plagas      = plagas.data   || [];
-    S.cache.fotos       = fotos.data    || [];
-    S.cache.cosechas    = cosechas.data || [];
-    S.cache.jornales    = jornales.data || [];
-    S.cache.proyectos   = proyectos.data || [];
-    S.cache.soportes    = soportes.data || [];
-  } catch(e){ console.warn('refreshAll fallo:', e.message); }
+  const Q = {
+    lotes:       () => sb.from('lotes').select('*').eq('activo', true),
+    inventory:   () => sb.from('inventario').select('*').order('descripcion'),
+    compras:     () => traerTodo(() => sb.from('compras').select('*').order('fecha_compra', { ascending:false }).order('id')),
+    ingresos:    () => traerTodo(() => sb.from('ingresos').select('*').order('fecha', { ascending:false }).order('id')),
+    memoria:     () => sb.from('memoria_agente').select('*').order('fecha', { ascending:false }).limit(20),
+    tasks:       () => sb.from('tareas').select('*, asignado:usuarios!asignado_a_id(codigo,nombre_corto), lote:lotes(codigo,cultivo,id)').order('creado_en', { ascending:false }),
+    activities:  () => traerTodo(() => sb.from('bitacora').select('*, responsable:usuarios!responsable_id(nombre_corto), lote:lotes(codigo,cultivo)').order('fecha', { ascending:false }).order('id')),
+    coordenadas: () => sb.from('coordenadas_lote').select('*').order('orden', { ascending:true }),
+    ciclos:      () => sb.from('ciclos_cultivo').select('*').order('cultivo'),
+    plagas:      () => sb.from('plagas').select('*, lote:lotes(codigo,cultivo), registrado:usuarios!registrado_por(nombre_corto)').order('creado_en', { ascending:false }),
+    fotos:       () => sb.from('fotos').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).limit(300),
+    cosechas:    () => traerTodo(() => sb.from('cosechas').select('*, lote:lotes(codigo,cultivo)').order('fecha_recoleccion', { ascending:false }).order('id')),
+    jornales:    () => traerTodo(() => sb.from('jornales').select('*, lote:lotes(codigo)').order('fecha', { ascending:false }).order('id')),
+    proyectos:   () => sb.from('proyectos').select('*').order('creado_en'),
+    soportes:    () => traerTodo(() => sb.from('soportes').select('*').order('creado_en').order('id'))
+  };
+  const claves = Object.keys(Q);
+  const res = await Promise.all(claves.map(k => Promise.resolve().then(Q[k]).catch(e => ({ data:null, error:e }))));
+  const fallas = [];
+  res.forEach((r, i) => { if (r && !r.error && Array.isArray(r.data)) S.cache[claves[i]] = r.data; else fallas.push(claves[i]); });
+  Outbox.leer().forEach(_aplicarLocal);
+  Sync.fallo = fallas.length ? (fallas.length === claves.length ? 'sin señal' : 'no se pudo actualizar todo') : '';
+  if (!fallas.length) Sync.ultimo = Date.now();
+  await Local.guardarCopia();
+  return !fallas.length;
 }
 
 /* Respuestas locales: contesta consultas comunes SIN gastar tokens del agente.
@@ -1583,7 +1629,7 @@ Al final, en una línea aparte, escribe exactamente: FRANJA: seguido de una sola
     if (!it || String(it.id).startsWith('tmp-')) return;
     const upd = { ficha_investigacion: ficha };
     if (franja) upd.franja_toxicologica = franja;
-    const { error } = await sb.from('inventario').update(upd).eq('id', it.id);
+    const { error } = await db.from('inventario').update(upd).eq('id', it.id);
     if (error){ console.warn('No se pudo guardar la ficha (¿falta la columna ficha_investigacion?):', error.message); return; }
     it.ficha_investigacion = ficha; if (franja) it.franja_toxicologica = franja;
     toast(`🔬 Ficha técnica lista: "${nombre}"`);
@@ -1602,7 +1648,6 @@ window.flowInvestigarInsumo = async function(id){
    REGISTRO FOTOGRÁFICO (Supabase Storage + tabla fotos)
    ═══════════════════════════════════════════════════════════════ */
 async function subirFoto(media, opts = {}){
-  if (!S.isOnline){ toast('Necesitas internet para subir fotos'); return null; }
   try{
     const img = new Image();
     await new Promise((ok, err) => { img.onload = ok; img.onerror = err; img.src = 'data:' + media.type + ';base64,' + media.b64; });
@@ -1612,13 +1657,10 @@ async function subirFoto(media, opts = {}){
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.8));
     const path = `${Date.now()}-${Math.floor(Math.random()*99999)}.jpg`;
-    const { error } = await sb.storage.from('fotos').upload(path, blob, { contentType:'image/jpeg' });
-    if (error){ toast('Error subiendo la foto: ' + error.message); return null; }
-    const { data } = sb.storage.from('fotos').getPublicUrl(path);
-    const { error: e2 } = await sb.from('fotos').insert({ url: data.publicUrl, nota: opts.nota || null, lote_id: opts.loteId || null, tomada_por: S.user?.dbId || null });
-    if (e2){ toast('Foto subida pero no quedó registrada: ' + e2.message); return null; }
-    await refreshAll();
-    return data.publicUrl;
+    const up = await db.subirArchivo('fotos', path, blob, 'image/jpeg');
+    if (up.error){ toast('Error guardando la foto: ' + up.error.message); return null; }
+    await db.from('fotos').insert({ url: up.url, nota: opts.nota || null, lote_id: opts.loteId || null, tomada_por: S.user?.dbId || null, fecha: new Date().toISOString() });
+    return up.url;
   } catch(e){ toast('Error procesando la foto'); return null; }
 }
 
@@ -1640,7 +1682,7 @@ window.flowGaleria = async function(loteId = null){
   const fotos = (S.cache.fotos || []).filter(f => !loteId || f.lote_id === loteId);
   const loteNom = loteId ? (S.cache.lotes.find(l => l.id === loteId)?.codigo || '') : '';
   const grid = fotos.length
-    ? `<div class="galeria-grid">${fotos.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(f.url)}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>`
+    ? `<div class="galeria-grid">${fotos.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(Local.url(f.url))}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>`
     : emptyState('ti-photo-off', 'Sin fotos aún', 'Toma la primera con el botón Foto.');
   const html = `<div class="modal-h"><i class="ti ti-photo"></i> Galería ${loteNom ? '· ' + esc(loteNom) : 'de la finca'} (${fotos.length})</div>
     <div class="modal-sub">Toca una foto para verla en grande y comparar el antes y después.</div>
@@ -1656,18 +1698,16 @@ window.flowVerFoto = function(id){
   const f = (S.cache.fotos || []).find(x => x.id == id); if (!f) return;
   const ov = document.createElement('div');
   ov.className = 'foto-view';
-  ov.innerHTML = `<div class="foto-view-bar"><button class="cam-btn-top" id="fv-close"><i class="ti ti-x"></i></button><div style="flex:1"></div><button class="cam-btn-top" id="fv-edit" title="Editar nota"><i class="ti ti-edit"></i></button><button class="cam-btn-top" id="fv-del" title="Borrar foto"><i class="ti ti-trash"></i></button></div><img src="${esc(f.url)}"><div class="foto-view-meta"><b>${esc(f.nota || 'Sin nota')}</b><br>${fmtDate(f.fecha)} · ${esc(f.lote?.codigo || 'Finca general')}</div>`;
+  ov.innerHTML = `<div class="foto-view-bar"><button class="cam-btn-top" id="fv-close"><i class="ti ti-x"></i></button><div style="flex:1"></div><button class="cam-btn-top" id="fv-edit" title="Editar nota"><i class="ti ti-edit"></i></button><button class="cam-btn-top" id="fv-del" title="Borrar foto"><i class="ti ti-trash"></i></button></div><img src="${esc(Local.url(f.url))}"><div class="foto-view-meta"><b>${esc(f.nota || 'Sin nota')}</b><br>${fmtDate(f.fecha)} · ${esc(f.lote?.codigo || 'Finca general')}</div>`;
   document.body.appendChild(ov);
   ov.querySelector('#fv-close').onclick = () => ov.remove();
   ov.querySelector('#fv-edit').onclick = () => { ov.remove(); flowEditFotoNota(f.id); };
   ov.querySelector('#fv-del').onclick = async () => {
     if (!window.confirm('¿Eliminar esta foto de la galería?')) return;
-    if (!S.isOnline){ toast('Necesitas internet para borrar fotos'); return; }
     try{
       const path = decodeURIComponent((f.url.split('/fotos/')[1] || '').split('?')[0]);
-      if (path) await sb.storage.from('fotos').remove([path]);
-      await sb.from('fotos').delete().eq('id', f.id);
-      await refreshAll();
+      await db.from('fotos').delete().eq('id', f.id);
+      if (path) db.borrarArchivo('fotos', path);
       toast('🗑️ Foto borrada'); ov.remove(); render();
     } catch(e){ toast('Error borrando la foto'); }
   };
@@ -3029,7 +3069,7 @@ async function ejecutarAccion(v){
       const r=await consumirInsumo({itemId:it.id, cantidad:cant, loteId:lote?.id||null});
       return r.success?`📦 Salida: -${r.usado} ${r.unidad} de ${r.descripcion}${r.costo>0?' · '+fmtMoney(r.costo):''}`:('⚠️ '+r.msg);
     }
-    case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); if(r.success && S.isOnline) await refreshAll(); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
+    case 'apunte':{ const r=await HANDLERS.save_memory({contenido:v.contenido}); return r.success?'🧠 Apunte guardado':('⚠️ '+r.msg); }
     case 'gasto':{ const lote=resolverLote(v.lote_codigo); const pr = v.prestamo==='si' ? proyectoPrincipal() : null;
       const r=await HANDLERS.add_gasto({concepto:v.concepto,categoria:pr?'Inversión invernadero':(v.categoria||'otro'),valor_total:parseFloat(v.valor)||0,lote_id:lote?.id||pr?.lote_id||null,fecha:v.fecha||null,
         ...(!pr && v.categoria==='Transporte' && v.cantidad ? {cantidad:parseFloat(v.cantidad)||1, unidad:v.unidad||'carga'} : {}),
@@ -3064,6 +3104,9 @@ async function ejecutarAccion(v){
    ═══════════════════════════════════════════════════════════════ */
 /* "1.250.000" → 1250000 (acepta puntos de miles y coma decimal) */
 function numPlata(v){
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  /* "1234.56" (un solo punto con 1 o 2 decimales) es un decimal, no miles: antes se volvía 123456 */
+  if (/^\s*-?\d+\.\d{1,2}\s*$/.test(String(v ?? ''))) return parseFloat(v) || 0;
   const t = String(v ?? '').replace(/[^\d.,-]/g, '');
   if (!t) return 0;
   return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
@@ -3727,18 +3770,17 @@ window.flowNuevoCiclo = async function(){
     { name:'duracion_dias', label:'Duración total (días)', type:'number', required:true, placeholder:'Ej: 90' }
   ]});
   if (!r) return;
-  if (!S.isOnline) { toast('Necesitas conexión'); return; }
-  const { error } = await sb.from('ciclos_cultivo').insert({ cultivo:r.cultivo, variedad:r.variedad||null, duracion_dias:parseInt(r.duracion_dias), etapas:[] });
+  const { error } = await db.from('ciclos_cultivo').insert({ cultivo:r.cultivo, variedad:r.variedad||null, duracion_dias:parseInt(r.duracion_dias), etapas:[] });
   if (error) { toast('Error: '+error.message); return; }
-  await refreshAll(); toast('✅ Ciclo guardado'); render();
+  toast('✅ Ciclo guardado'); render();
 };
 
 window.flowDeleteCiclo = async function(id, cultivo){
   const ok = await M.confirm({ title:'Borrar ciclo', body:`¿Borrar el ciclo de "${cultivo}"?`, okText:'Sí, borrar', danger:true, cancelText:'Cancelar' });
   if (!ok) return;
-  const { error } = await sb.from('ciclos_cultivo').delete().eq('id', id);
+  const { error } = await db.from('ciclos_cultivo').delete().eq('id', id);
   if (error) { toast('Error: '+error.message); return; }
-  await refreshAll(); toast('🗑️ Ciclo borrado');
+  toast('🗑️ Ciclo borrado');
 };
 
 function plantaPensando(){
@@ -4100,7 +4142,7 @@ function renderCultivos(){
       ${(() => {
         const todas = (S.cache.fotos||[]).filter(f => f.lote_id === l.id), fs = todas.slice(0,6);
         const btnFotos = `<button class="btn btn-sm btn-soft" onclick="flowGaleria('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-photo"></i> Ver todas</button><button class="btn btn-sm btn-yellow" onclick="flowNuevaFoto('${l.id}')" style="font-size:10px;padding:3px 8px"><i class="ti ti-camera"></i> Foto</button>`;
-        return plegable('lote-fotos', `<i class="ti ti-photo"></i> Fotos`, fs.length ? `<div class="galeria-grid">${fs.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(f.url)}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin fotos de este lote aún.</div>`,
+        return plegable('lote-fotos', `<i class="ti ti-photo"></i> Fotos`, fs.length ? `<div class="galeria-grid">${fs.map(f => `<img class="galeria-thumb" loading="lazy" src="${esc(Local.url(f.url))}" onclick="flowVerFoto('${f.id}')">`).join('')}</div>` : `<div class="text-tiny" style="padding:6px 0;color:var(--tx3)">Sin fotos de este lote aún.</div>`,
           { resumen: String(todas.length), acciones: btnFotos });
       })()}
       ${(() => {
@@ -4290,7 +4332,11 @@ window.nuevoGastoLauro = async function(){
 
 /* Cuánta plata ha salido de la finca, por cuenta, y cuánto de eso tiene soporte */
 function tarjetaCuentas(){
+  /* Una fila cuenta con soporte si ella o cualquier fila de su misma factura lo tiene */
   const conSop = new Set((S.cache.soportes || []).map(s => s.compra_id).filter(Boolean));
+  const llave = c => c.numero_factura ? c.numero_factura + '|' + (c.proveedor || '') : null;
+  const facConSop = new Set((S.cache.compras || []).filter(c => conSop.has(c.id)).map(llave).filter(Boolean));
+  (S.cache.compras || []).forEach(c => { if (llave(c) && facConSop.has(llave(c))) conSop.add(c.id); });
   const conSopJ = new Set((S.cache.soportes || []).map(s => s.jornal_id).filter(Boolean));
   const nombre = c => (CATS_GASTO.find(o => o.value === c) || {}).label || c || 'Sin categoría';
   const g = {};
@@ -4306,6 +4352,10 @@ function tarjetaCuentas(){
 }
 
 /* ── Gastos de la finca por fecha (como el préstamo): una factura = una fila, con sus productos y soportes ── */
+/* Miniatura de un soporte (PDF o foto) */
+function chipSoporte(s){ return s.tipo === 'application/pdf'
+  ? `<button class="sop-chip" onclick="verSoporte('${s.id}')" title="${escA(s.nombre||'PDF')}"><i class="ti ti-file-type-pdf"></i></button>`
+  : `<img class="sop-thumb" loading="lazy" src="${esc(Local.url(s.url))}" onclick="verSoporte('${s.id}')" alt="">`; }
 function nombreCuenta(c){ return (CATS_GASTO.find(o => o.value === c) || {}).label || c || 'Sin categoría'; }
 function movimientosFinca(){
   const sop = S.cache.soportes || [], grupos = {}, movs = [];
@@ -4324,18 +4374,25 @@ function movimientosFinca(){
   return movs.sort((a,b) => tsOrden(b.fecha) - tsOrden(a.fecha));
 }
 const FILTROS_FINCA = [['todo','Todo'],['compras','Compras'],['jornales','Jornales'],['Gastos Lauro','Lauro'],['Por verificar','Por verificar'],['Pago crédito','Cuotas'],['sinsop','Sin soporte']];
+/* Filtra por fila: si una factura mezcla cuentas, solo quedan (y suman) las filas de la cuenta elegida */
 function filtrarFinca(movs, f){
-  if (f === 'compras') return movs.filter(m => m.tipo === 'gasto' && !m.filas.some(x => ['Gastos Lauro','Por verificar','Pago crédito','jornales'].includes(x.cat)));
-  if (f === 'jornales') return movs.filter(m => m.tipo === 'jornal' || m.filas.some(x => x.cat === 'jornales'));
+  const especiales = ['Gastos Lauro','Por verificar','Pago crédito','jornales'];
   if (f === 'sinsop') return movs.filter(m => !m.soportes.length);
-  if (f && f !== 'todo') return movs.filter(m => m.filas.some(x => x.cat === f));
-  return movs;
+  if (!f || f === 'todo') return movs;
+  const prueba = f === 'compras' ? (x => !especiales.includes(x.cat)) : f === 'jornales' ? (x => x.cat === 'jornales') : (x => x.cat === f);
+  return movs.flatMap(m => {
+    if (m.tipo === 'jornal') return f === 'jornales' ? [m] : [];
+    const filas = m.filas.filter(prueba);
+    if (!filas.length) return [];
+    if (filas.length === m.filas.length) return [m];
+    return [{ ...m, filas, valor: filas.reduce((a,x) => a + x.v, 0), cats: new Set(filas.map(x => nombreCuenta(x.cat))), concepto: filas.length > 1 ? m.concepto : filas[0].d, parcial:true }];
+  });
 }
-function nombreMesFinca(k){ try { const s = new Date(k + '-15T12:00:00-05:00').toLocaleDateString('es-CO', { month:'long', year:'numeric', timeZone:TZ_FINCA }); return s.charAt(0).toUpperCase() + s.slice(1); } catch(e){ return k; } }
+function nombreMesFinca(k){ if (!k) return 'Sin fecha'; try { const s = new Date(k + '-15T12:00:00-05:00').toLocaleDateString('es-CO', { month:'long', year:'numeric', timeZone:TZ_FINCA }); return s.charAt(0).toUpperCase() + s.slice(1); } catch(e){ return k; } }
 function tarjetaGastosFinca(){
   const movs = movimientosFinca(), total = movs.reduce((a,m) => a + m.valor, 0), conS = movs.filter(m => m.soportes.length);
   return plegable('dinero-finca', `<i class="ti ti-receipt"></i> Gastos de la finca`, `
-    <div class="map-dims rend-grid" style="margin-bottom:8px"><div><b>${fmtMoney(total)}</b>Gastado</div><div><b>${fmtMoney(conS.reduce((a,m) => a + m.valor, 0))}</b>Con soporte</div><div><b style="color:var(--yl)">${movs.length - conS.length}</b>Sin soporte</div></div>
+    <div class="map-dims rend-grid" style="margin-bottom:8px"><div><b>${fmtMoney(total)}</b>Gastado</div><div><b>${fmtMoney(conS.reduce((a,m) => a + m.valor, 0))}</b>Con soporte</div><div><b style="color:var(--yl)">${fmtMoney(total - conS.reduce((a,m) => a + m.valor, 0))}</b>Sin soporte · ${movs.length - conS.length} gastos</div></div>
     <button class="btn btn-primary btn-block" onclick="abrirGastosFinca()"><i class="ti ti-folder-open"></i> Ver gastos por fecha</button>`,
     { abierta: true, resumen: fmtMoney(total) });
 }
@@ -4344,10 +4401,8 @@ window.filtroFinca = function(f){ S.filtroFinca = f; render(); };
 function renderGastosFinca(){
   const todos = movimientosFinca(), f = S.filtroFinca || 'todo', movs = filtrarFinca(todos, f);
   const total = movs.reduce((a,m) => a + m.valor, 0), conS = movs.filter(m => m.soportes.length), sumS = conS.reduce((a,m) => a + m.valor, 0);
-  const chipSop = s => s.tipo === 'application/pdf'
-    ? `<button class="sop-chip" onclick="verSoporte('${s.id}')" title="${escA(s.nombre||'PDF')}"><i class="ti ti-file-type-pdf"></i></button>`
-    : `<img class="sop-thumb" loading="lazy" src="${esc(s.url)}" onclick="verSoporte('${s.id}')" alt="">`;
-  const btnEdit = x => `<button class="btn btn-sm btn-ghost" onclick="flowEditGasto('${x.id}','${escA(x.d)}',${x.v},'${escA(x.cat||'otro')}')" style="padding:2px;border:none" title="Editar"><i class="ti ti-edit"></i></button>`;
+  const chipSop = chipSoporte;
+  const btnEdit = x => `<button class="btn btn-sm btn-ghost" onclick="flowEditGasto('${x.id}','${escA(x.d)}',${x.v},'${escA(x.cat||'')}')" style="padding:2px;border:none" title="Editar"><i class="ti ti-edit"></i></button>`;
   const btnDel = x => `<button class="btn btn-sm btn-ghost" onclick="flowDeleteGasto('${x.id}','${escA(x.d)}')" style="padding:2px;border:none;color:var(--rd)" title="Borrar"><i class="ti ti-trash"></i></button>`;
   const fila = m => {
     const varias = m.filas.length > 1, j = m.tipo === 'jornal';
@@ -4356,7 +4411,8 @@ function renderGastosFinca(){
         ${m.filas.map(x => `<tr><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v)}</td><td style="white-space:nowrap">${btnEdit(x)}${btnDel(x)}</td></tr>`).join('')}
         <tr><td><b>Total de la factura</b></td><td class="num"><b>${fmtMoney(m.valor)}</b></td><td></td></tr></tbody></table></div></details>`
       : m.items.length ? `<details class="fac-items"><summary><i class="ti ti-list-details"></i> Ver ${m.items.length} producto${m.items.length === 1 ? '' : 's'}</summary>
-        <div class="inf-wrap" style="max-height:none"><table class="inf-table"><tbody>${m.items.map(x => `<tr><td class="num">${x.c.toLocaleString('es-CO')}</td><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v)}</td></tr>`).join('')}</tbody></table></div></details>` : '';
+        <div class="inf-wrap" style="max-height:none"><table class="inf-table"><tbody>${m.items.map(x => `<tr><td class="num">${x.c.toLocaleString('es-CO')}</td><td style="white-space:normal">${esc(x.d)}</td><td class="num">${fmtMoney(x.v)}</td></tr>`).join('')}</tbody></table></div>
+        ${Math.abs(m.items.reduce((a,x) => a + x.v, 0) - m.valor) > 1 ? `<div class="text-tiny" style="color:var(--yl)">⚠️ La suma de los productos (${fmtMoney(m.items.reduce((a,x) => a + x.v, 0))}) no da el total.</div>` : ''}</details>` : '';
     return `<div class="mini-list-item" style="align-items:flex-start">
       <div class="icon-pill ${j ? 'ip-brown' : 'ip-red'}" style="width:30px;height:30px;font-size:15px"><i class="ti ${j ? 'ti-user' : 'ti-receipt'}"></i></div>
       <div class="mini-list-body">
@@ -4408,7 +4464,8 @@ tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det
 <h2>Por cuenta</h2><table><tr><th>Cuenta</th><th class="n">Valor</th></tr>${Object.entries(cuentas).sort((a,b) => b[1] - a[1]).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${fmtMoney(v)}</td></tr>`).join('')}</table>
 <h2>Detalle por fecha</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Cuenta</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(total)}</th><th></th></tr></table>
 </body></html>`;
-  const w = window.open(URL.createObjectURL(new Blob([html], { type:'text/html' })), '_blank');
+  const u = URL.createObjectURL(new Blob([html], { type:'text/html' })), w = window.open(u, '_blank');
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
   if (!w) toast('Permite las ventanas emergentes para ver el informe');
 };
 
@@ -4431,9 +4488,7 @@ function renderPrestamo(){
   const p = (S.cache.proyectos || []).find(x => x.id === S.activeProyecto);
   if (!p){ S.activeProyecto = null; return renderDinero(); }
   const R = resumenProyecto(p), lote = (S.cache.lotes || []).find(l => l.id === p.lote_id);
-  const chipSop = s => s.tipo === 'application/pdf'
-    ? `<button class="sop-chip" onclick="verSoporte('${s.id}')" title="${escA(s.nombre||'PDF')}"><i class="ti ti-file-type-pdf"></i></button>`
-    : `<img class="sop-thumb" loading="lazy" src="${esc(s.url)}" onclick="verSoporte('${s.id}')" alt="">`;
+  const chipSop = chipSoporte;
   const fila = m => `<div class="mini-list-item" style="align-items:flex-start">
       <div class="icon-pill ${m.tipo === 'jornal' ? 'ip-brown' : 'ip-red'}" style="width:30px;height:30px;font-size:15px"><i class="ti ${m.tipo === 'jornal' ? 'ti-user' : 'ti-receipt'}"></i></div>
       <div class="mini-list-body">
@@ -4504,10 +4559,9 @@ window.editarPrestamo = async function(id){
   toast(r2.success ? '✅ Préstamo actualizado' : r2.msg); if (r2.success) render();
 };
 async function guardarFila(tabla, id, cambios){
-  if (!S.isOnline) return { success:false, msg:'Necesitas conexión' };
   const { error } = await sb.from(tabla).update(cambios).eq('id', id);
   if (error) return { success:false, msg:'Error BD: ' + error.message };
-  await refreshAll(); return { success:true };
+  return { success:true };
 }
 const _rubroOpts = () => RUBROS.map(x => ({ value:x, label:x }));
 window.nuevoGastoPrestamo = async function(proyectoId){
@@ -4580,15 +4634,14 @@ window.asignarAlPrestamo = async function(proyectoId){
   document.getElementById('asig-q').oninput = e => { const q = _normTxt(e.target.value); document.querySelectorAll('.asig-fila').forEach(f => f.style.display = !q || f.dataset.txt.includes(q) ? '' : 'none'); };
   document.getElementById('asig-ok').onclick = () => M._close([...document.querySelectorAll('.asig-fila input:checked')].map(x => cand[+x.dataset.i]));
   const sel = await prom; if (!sel || !sel.length) return;
-  if (!S.isOnline){ toast('Necesitas conexión'); return; }
   const comprasIds = sel.filter(m => m.tipo === 'gasto').map(m => m.id), jornIds = sel.filter(m => m.tipo === 'jornal').map(m => m.id);
   let error = null;
-  if (comprasIds.length) ({ error } = await sb.from('compras').update({ proyecto_id: proyectoId }).in('id', comprasIds));
-  if (!error && jornIds.length) ({ error } = await sb.from('jornales').update({ proyecto_id: proyectoId }).in('id', jornIds));
+  if (comprasIds.length) ({ error } = await db.from('compras').update({ proyecto_id: proyectoId }).in('id', comprasIds));
+  if (!error && jornIds.length) ({ error } = await db.from('jornales').update({ proyecto_id: proyectoId }).in('id', jornIds));
   if (error){ toast('Error: ' + error.message); return; }
   // Rubro sugerido para los gastos traídos que no tenían
-  for (const m of sel.filter(m => m.tipo === 'gasto')){ const c = (S.cache.compras || []).find(x => x.id === m.id); if (c && !c.rubro) await sb.from('compras').update({ rubro: rubroDeTexto(c.concepto) }).eq('id', m.id); }
-  await refreshAll(); toast(`✅ ${sel.length} movimiento(s) agregados al préstamo`); render();
+  for (const m of sel.filter(m => m.tipo === 'gasto')){ const c = (S.cache.compras || []).find(x => x.id === m.id); if (c && !c.rubro) await db.from('compras').update({ rubro: rubroDeTexto(c.concepto) }).eq('id', m.id); }
+  toast(`✅ ${sel.length} movimiento(s) agregados al préstamo`); render();
 };
 
 /* ── Soportes: fotos y PDF ── */
@@ -4606,7 +4659,6 @@ async function _comprimirImagen(file){
   });
 }
 window.adjuntarSoporte = function(tipo, id){
-  if (!S.isOnline){ toast('Necesitas internet para subir soportes'); return; }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*,application/pdf'; inp.multiple = true;
   inp.onchange = async () => {
@@ -4617,20 +4669,18 @@ window.adjuntarSoporte = function(tipo, id){
       const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
       if (!esPdf && !/^image\//.test(f.type)){ toast(`«${f.name}» no es foto ni PDF`); continue; }
       if (f.size > 20 * 1024 * 1024){ toast(`«${f.name}» pesa más de 20 MB`); continue; }
-      toast(`⬆️ Subiendo ${f.name}…`);
       const cuerpo = esPdf ? f : await _comprimirImagen(f);
       const limpio = _normTxt(f.name).replace(/[^a-z0-9.]+/g, '-').slice(-60);
       const ruta = `${proyecto_id || 'general'}/${Date.now()}-${Math.floor(Math.random()*9999)}-${esPdf ? limpio : limpio.replace(/\.[a-z0-9]+$/, '') + '.jpg'}`;
-      const { error } = await sb.storage.from('soportes').upload(ruta, cuerpo, { contentType: esPdf ? 'application/pdf' : 'image/jpeg' });
-      if (error){ toast('Error subiendo: ' + error.message); continue; }
-      const { data } = sb.storage.from('soportes').getPublicUrl(ruta);
-      const fila = { proyecto_id, url: data.publicUrl, ruta, nombre: f.name, tipo: esPdf ? 'application/pdf' : 'image/jpeg',
+      const up = await db.subirArchivo('soportes', ruta, cuerpo, esPdf ? 'application/pdf' : 'image/jpeg');
+      if (up.error){ toast('Error guardando: ' + up.error.message); continue; }
+      const fila = { proyecto_id, url: up.url, ruta, nombre: f.name, tipo: esPdf ? 'application/pdf' : 'image/jpeg',
         compra_id: tipo === 'gasto' ? id : null, jornal_id: tipo === 'jornal' ? id : null };
-      const { error: e2 } = await sb.from('soportes').insert(fila);
+      const { error: e2 } = await db.from('soportes').insert(fila);
       if (e2){ toast('Subido pero no quedó registrado: ' + e2.message); continue; }
       ok++;
     }
-    await refreshAll(); if (ok) toast(`📎 ${ok} soporte(s) guardado(s)`); render();
+    if (ok) toast(`📎 ${ok} soporte(s) guardado(s)`); render();
   };
   inp.click();
 };
@@ -4638,10 +4688,10 @@ window.verSoporte = function(id){
   const s = (S.cache.soportes || []).find(x => x.id === id); if (!s) return;
   const pdf = s.tipo === 'application/pdf';
   M._open(`<div class="modal-h"><i class="ti ${pdf ? 'ti-file-type-pdf' : 'ti-photo'}"></i> Soporte</div><div class="modal-sub">${esc(s.nombre || '')} · ${fmtFecha(s.creado_en)}</div>
-    ${pdf ? `<div class="spec-box">Documento PDF. Ábrelo para verlo o descargarlo.</div>` : `<img src="${esc(s.url)}" style="width:100%;border-radius:10px;margin-bottom:10px">`}
+    ${pdf ? `<div class="spec-box">Documento PDF. Ábrelo para verlo o descargarlo.</div>` : `<img src="${esc(Local.url(s.url))}" style="width:100%;border-radius:10px;margin-bottom:10px">`}
     <div class="modal-actions" style="flex-wrap:wrap;gap:6px">
       <button class="btn btn-ghost" style="color:var(--rd)" onclick="borrarSoporte('${s.id}')"><i class="ti ti-trash"></i> Borrar</button>
-      <a class="btn btn-primary" href="${esc(s.url)}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Abrir</a>
+      <a class="btn btn-primary" href="${esc(Local.url(s.url))}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Abrir</a>
     </div>`);
 };
 window.borrarSoporte = async function(id){
@@ -4650,10 +4700,11 @@ window.borrarSoporte = async function(id){
   const ok = await M.confirm({ title:'Borrar soporte', body:`¿Eliminar «${esc(s.nombre || 'este archivo')}»? No se puede deshacer.`, okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
   if (!ok) return;
   /* Una factura con varios productos comparte el archivo: solo se borra cuando ya nadie lo usa */
-  if (s.ruta && !(S.cache.soportes || []).some(x => x.id !== id && x.ruta === s.ruta)) await sb.storage.from('soportes').remove([s.ruta]);
-  const { error } = await sb.from('soportes').delete().eq('id', id);
+  const compartido = (S.cache.soportes || []).some(x => x.id !== id && x.ruta === s.ruta);
+  const { error } = await db.from('soportes').delete().eq('id', id);
   if (error){ toast('Error: ' + error.message); return; }
-  await refreshAll(); toast('🗑️ Soporte borrado'); render();
+  if (s.ruta && !compartido) db.borrarArchivo('soportes', s.ruta);
+  toast('🗑️ Soporte borrado'); render();
 };
 
 /* ── Informe para el banco: tabla (copiar, Excel) e impresión / PDF ── */
@@ -4690,7 +4741,8 @@ tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det
 ${fotos ? `<h2>Registro fotográfico</h2><div class="fotos">${fotos}</div>` : ''}
 ${R.generales.length ? `<h2>Documentos del préstamo</h2><ul>${R.generales.map(s => `<li><a href="${esc(s.url)}">${esc(s.nombre || 'Documento')}</a></li>`).join('')}</ul>` : ''}
 </body></html>`;
-  const w = window.open(URL.createObjectURL(new Blob([html], { type:'text/html' })), '_blank');
+  const u = URL.createObjectURL(new Blob([html], { type:'text/html' })), w = window.open(u, '_blank');
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
   if (!w) toast('Permite las ventanas emergentes para ver el informe');
 }
 
@@ -5274,27 +5326,26 @@ window.flowEditLote = async function(id){
 window.flowDeleteLote = async function(id, codigo){
   const ok = await M.confirm({ title:'Borrar lote', body:`¿Seguro que quieres eliminar el lote "${codigo}"? Esta acción no se puede deshacer.`, okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
   if (!ok) return;
-  if (!S.isOnline) { toast('Necesitas conexión para borrar lotes'); return; }
-  const { error } = await sb.from('lotes').update({ activo:false }).eq('id', id);
+  const { error } = await db.from('lotes').update({ activo:false }).eq('id', id);
   if (error) { toast('Error: ' + error.message); return; }
-  await refreshAll(); toast('🗑️ Lote eliminado'); render();
+  toast('🗑️ Lote eliminado'); render();
 };
 
 window.flowEditGasto = async function(id, concepto, valor, categoria){
   /* Si el gasto tiene una categoría que no está en la lista, se conserva (antes se cambiaba sin querer) */
-  const catOpts = CATS_GASTO.some(o => o.value === categoria) || !categoria ? CATS_GASTO : [...CATS_GASTO, { value:categoria, label:categoria }];
+  const catOpts = !categoria ? [{ value:'', label:'Sin categoría' }, ...CATS_GASTO] : CATS_GASTO.some(o => o.value === categoria) ? CATS_GASTO : [...CATS_GASTO, { value:categoria, label:categoria }];
   const g = S.cache.compras.find(x => x.id == id);
   const r = await M.form({
     title:'Editar gasto', okText:'Guardar cambios',
     fields:[
       { name:'concepto', label:'¿En qué se gastó?', type:'text', required:true, initial: concepto },
-      { name:'valor', label:'Valor total', type:'money', required:true, initial: String(valor) },
-      { name:'categoria', label:'Categoría', type:'select', options: catOpts, initial: categoria },
+      { name:'valor', label:'Valor total', type:'money', required:true, initial: String(Math.round(valor || 0)) },
+      { name:'categoria', label:'Categoría', type:'select', options: catOpts, initial: categoria || '' },
       { name:'fecha', label:'Fecha del gasto', type:'date', initial: toDateInput(g?.fecha_compra) }
     ]
   });
   if (!r) return;
-  const resp = await HANDLERS.edit_gasto(id, { concepto:r.concepto, valor_total:parseFloat(r.valor), categoria:r.categoria, fecha_compra: r.fecha || null });
+  const resp = await HANDLERS.edit_gasto(id, { concepto:r.concepto, valor_total:numPlata(r.valor), categoria:r.categoria || null, fecha_compra: r.fecha || g?.fecha_compra || fechaLocalISO() });
   toast(resp.success ? '✅ Gasto actualizado' : resp.msg); if (resp.success) render();
 };
 
@@ -5685,14 +5736,12 @@ window.flowNuevoFlete = async function(loteId, id){
   const f = _fleteDeForm(r, n, r.unidad, l);
   if (prev?.cosecha_id) f.cosecha_id = prev.cosecha_id;
   const resp = await HANDLERS.guardar_flete({ ...f, id: prev?.id });
-  if (resp.success) await refreshAll();
   toast(resp.success ? `🚚 Flete: ${textoFlete(f)}` : resp.msg); if (resp.success) render();
 };
 window.flowBorrarFlete = async function(id){
   const ok = await M.confirm({ title:'Borrar flete', body:'¿Eliminar este flete? También se quita del costo del lote.', okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
   if (!ok) return;
   const r = await HANDLERS.guardar_flete({ id, valor_total:0 });
-  if (r.success) await refreshAll();
   toast(r.success ? '🗑️ Flete borrado' : r.msg); if (r.success) render();
 };
 /* Opciones de categoría: las del lote más la que ya tenga el registro */
@@ -5809,8 +5858,7 @@ async function flowCompleteTask(id){
   toast(`✓ Tarea completada`, {
     duration: 4500, action: { label: 'Deshacer', onClick: async () => {
       undone = true; task.estado = previousState;
-      if (S.isOnline){ try { await sb.from('tareas').update({ estado: previousState }).eq('id', id); } catch(e){} }
-      else { const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); localStorage.setItem(QUEUE_KEY, JSON.stringify(q.filter(x => !(x.action === 'complete_task' && x.id == id)))); }
+      await db.from('tareas').update({ estado: previousState }).eq('id', id);
       render();
     }}
   });
@@ -5942,10 +5990,9 @@ window.flowEditCiclo = async function(id){
     { name:'duracion_dias', label:'Duración total (días)', type:'number', required:true, initial: String(c.duracion_dias || '') }
   ]});
   if (!r) return;
-  if (!S.isOnline){ toast('Necesitas conexión'); return; }
-  const { error } = await sb.from('ciclos_cultivo').update({ cultivo:r.cultivo, variedad:r.variedad || null, duracion_dias:parseInt(r.duracion_dias) }).eq('id', id);
+  const { error } = await db.from('ciclos_cultivo').update({ cultivo:r.cultivo, variedad:r.variedad || null, duracion_dias:parseInt(r.duracion_dias) }).eq('id', id);
   if (error){ toast('Error: ' + error.message); return; }
-  await refreshAll(); toast('✅ Ciclo actualizado'); render();
+  toast('✅ Ciclo actualizado'); render();
 };
 
 /* Apuntes de la finca ("recuerda que…"): ver, corregir y borrar */
@@ -6262,16 +6309,10 @@ window.flowMapaLote = async function(loteId, loteCodigo){
         const lat = pos.coords.latitude, lng = pos.coords.longitude;
         const newPt = { lote_id: loteId, latitud: lat, longitud: lng, orden: pts.length, creado_por_id: S.user?.dbId || null };
         try {
-          const { data, error } = await sb.from('coordenadas_lote').insert(newPt).select().single();
+          const { data, error } = await db.from('coordenadas_lote').insert(newPt).select().single();
           if (error) throw error;
           pts.push(data);
-          S.cache.coordenadas.push(data);
-        } catch(e) {
-          // offline fallback
-          const tmp = { ...newPt, id: 'tmp-'+Date.now() };
-          pts.push(tmp); S.cache.coordenadas.push(tmp);
-          toast('Punto guardado localmente (sin conexión)');
-        }
+        } catch(e) { toast('No se pudo guardar el punto'); }
         renderModal();
       }, (err) => {
         toast('❌ No se pudo obtener GPS: ' + err.message);
@@ -6284,15 +6325,15 @@ window.flowMapaLote = async function(loteId, loteCodigo){
       const ok = await M.confirm({ title:'Eliminar punto', body:`¿Borrar el punto ${idx+1}?`, okText:'Sí, borrar', cancelText:'Cancelar', danger:true });
       if (!ok) return;
       if (!pt.id.toString().startsWith('tmp-')) {
-        try { await sb.from('coordenadas_lote').delete().eq('id', pt.id); } catch(e){}
+        try { await db.from('coordenadas_lote').delete().eq('id', pt.id); } catch(e){}
       }
       pts.splice(idx, 1);
       S.cache.coordenadas = S.cache.coordenadas.filter(c => c.id !== pt.id);
       // Renumerar orden en BD
-      if (S.isOnline) {
+      {
         for (let i = idx; i < pts.length; i++){
           if (!pts[i].id.toString().startsWith('tmp-')) {
-            await sb.from('coordenadas_lote').update({ orden: i }).eq('id', pts[i].id).then(()=>{}).catch(()=>{});
+            await db.from('coordenadas_lote').update({ orden: i }).eq('id', pts[i].id).then(()=>{}).catch(()=>{});
             pts[i].orden = i;
           }
         }
@@ -6310,7 +6351,7 @@ window.flowMapaLote = async function(loteId, loteCodigo){
         const pt = pts[idx];
         try {
           if (!pt.id.toString().startsWith('tmp-')) {
-            const { error } = await sb.from('coordenadas_lote').update({ latitud:lat, longitud:lng }).eq('id', pt.id);
+            const { error } = await db.from('coordenadas_lote').update({ latitud:lat, longitud:lng }).eq('id', pt.id);
             if (error) throw error;
           }
           pts[idx] = { ...pt, latitud:lat, longitud:lng };
@@ -6414,7 +6455,8 @@ function bindAppEvents(){
 async function doLogin(user){
   S.user = user; S.screen = 'app'; S.tab = 'agente'; S.activeBodegaCat = null;
   Nav.init(); Nav.push();
-  await refreshAll(); syncOfflineQueue(); render();
+  await Local.cargarCopia(); render();
+  Sync.iniciar(); Sync.todo();
   Weather.fetch().then(() => render()).catch(() => {});
   if (!doLogin._weatherInterval) doLogin._weatherInterval = setInterval(() => Weather.fetch().then(() => render()), 30 * 60 * 1000);
   Alerts.startScheduler(); setTimeout(() => Alerts.checkOnStartup(), 500);
@@ -6457,7 +6499,7 @@ window.dictarSeccion = function(dominio){
 function render(){
   const app = document.getElementById('app');
   if (S.screen === 'login'){
-    app.innerHTML = `<div class="login"><div class="login-logo"><i class="ti ti-plant-2"></i></div><h1 class="login-h">Finca El Retiro</h1><div class="login-sub">Tu mano derecha en el campo</div><div class="ulist">${S.users.length ? S.users.map(u => `<button class="uitem" data-login="${u.id}"><div class="uitem-av">${initial(u.display)}</div><div style="flex:1"><div${u.color?` style="color:${u.color}"`:''}>${u.display}</div>${u.fullName?`<div class="text-tiny" style="font-weight:400;margin-top:1px">${u.fullName}</div>`:''}</div><i class="ti ti-chevron-right uitem-chev"></i></button>`).join('') : '<div class="text-small" style="text-align:center;padding:16px">Cargando usuarios...</div>'}</div></div>`;
+    app.innerHTML = `<div class="login"><div class="login-logo"><i class="ti ti-plant-2"></i></div><h1 class="login-h">Finca El Retiro</h1><div class="login-sub">Tu mano derecha en el campo</div><div class="ulist">${S.users.length ? S.users.map(u => `<button class="uitem" data-login="${u.id}"><div class="uitem-av">${initial(u.display)}</div><div style="flex:1"><div${u.color?` style="color:${u.color}"`:''}>${u.display}</div>${u.fullName?`<div class="text-tiny" style="font-weight:400;margin-top:1px">${u.fullName}</div>`:''}</div><i class="ti ti-chevron-right uitem-chev"></i></button>`).join('') : (S.sinUsuarios ? '<div class="text-small" style="text-align:center;padding:16px">Sin señal. La primera vez se necesita internet para traer los usuarios; después la app abre sin señal.</div>' : '<div class="text-small" style="text-align:center;padding:16px">Cargando usuarios...</div>')}</div></div>`;
     document.querySelectorAll('[data-login]').forEach(el => el.addEventListener('click', () => doLogin(S.users.find(u => u.id === el.dataset.login))));
     return;
   }
@@ -6483,7 +6525,7 @@ function render(){
   app.innerHTML = `
     <div class="topbar">
       <div class="tb-logo"><i class="ti ti-plant-2"></i></div>
-      <div class="tb-mid"><div class="tb-name">Finca El Retiro ${netDot}</div><div class="tb-user"><i class="ti ti-user" style="font-size:11px"></i> ${S.user?.display || '—'} · ${S.isOnline?'sincronizado':'sin conexión'}</div></div>
+      <div class="tb-mid"><div class="tb-name">Finca El Retiro ${netDot}</div><div class="tb-user"><i class="ti ti-user" style="font-size:11px"></i> ${S.user?.display || '—'} · <span style="cursor:pointer" onclick="verPendientes()">${textoSync()}</span></div></div>
       ${Weather.renderPill()} ${bell}
       <div class="tb-av" id="btn-logout" title="Tocar para cambiar de usuario">${initial(S.user?.display)}<span class="tb-av-dot"></span></div>
     </div>
@@ -6492,6 +6534,15 @@ function render(){
   bindAppEvents();
 }
 
+function textoSync(){
+  const n = Outbox.pendientes(), e = Outbox.conError().length;
+  if (e) return `<b style="color:var(--rd)">⚠️ ${e} sin subir</b>`;
+  if (Sync.corriendo && n) return `<i class="ti ti-cloud-upload"></i> subiendo ${n}…`;
+  if (!S.isOnline || Sync.fallo === 'sin señal') return n ? `<i class="ti ti-cloud-off"></i> sin señal · ${n} por subir` : '<i class="ti ti-cloud-off"></i> sin señal · guardado en el teléfono';
+  if (n) return `<i class="ti ti-cloud-upload"></i> ${n} por subir`;
+  if (Sync.fallo) return '<i class="ti ti-cloud-exclamation"></i> no se pudo actualizar';
+  return '<i class="ti ti-cloud-check"></i> sincronizado';
+}
 async function init(){ await loadUsers(); render(); }
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')){

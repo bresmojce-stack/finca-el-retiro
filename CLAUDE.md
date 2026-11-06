@@ -7,9 +7,16 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Proyecto
 - `index.html`: toda la app (JS sin frameworks). `sw.js`: modo sin conexión.
-- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v13.0).
+- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v13.1).
 - Publicar: trabajar en la rama asignada, push, crear PR y hacer merge a `main` con el MCP de GitHub. Netlify publica `main` en https://finca-el-retiro.netlify.app
 - `informes/`: informe del préstamo en PDF (ver abajo). `informes/salida/` no se sube (está en `.gitignore`).
+
+## Funciona sin internet (desde v13.1)
+- Todo cambio se guarda primero en el teléfono (`db.from(...)` en vez de `sb.from(...)` para escribir) y entra a la bandeja `finca_outbox_v2` (localStorage); `Sync` lo sube en orden cuando hay señal y luego baja todo (`refreshAll`). La copia de los datos está en IndexedDB (`finca-retiro`/`kv`/`cache`).
+- Filas nuevas nacen con su id (UUID; en `ingresos` un número grande), y se suben con upsert que ignora repetidos: subir dos veces no duplica.
+- Si el servidor rechaza un cambio, queda marcado (no se bota) y se ve tocando el estado de la nube en la barra de arriba (reintentar o descartar).
+- Fotos y soportes se guardan en IndexedDB y se suben con la bandeja (`db.subirArchivo`). Los otros teléfonos se enteran por Supabase Realtime o cada minuto.
+- **Nunca escribir con `sb.from(...).insert/update/delete` en la app**: usar `db.from(...)`.
 
 ## Base de datos (Supabase)
 - Proyecto `sueramxzbibijuaamzbi`, URL `https://sueramxzbibijuaamzbi.supabase.co`, llave publicable `sb_publishable_z94UVtLm_UN4rJUuGMGS4w_FwTc79Fc`.
