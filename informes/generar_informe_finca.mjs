@@ -8,13 +8,14 @@
  * Uso:   node informes/generar_informe_finca.mjs [--compras] [salida.pdf] [desde AAAA-MM-DD]
  *        --compras: solo lo comprado (insumos, herramientas, semillas…), sin jornales, transferencias
  *        por verificar, cuotas del crédito ni gastos de Lauro.
- * Necesita: Playwright (Chromium) y pdfunite (poppler-utils).
+ * Necesita: Playwright (Chromium), pdftoppm (poppler-utils) y Python con Pillow y numpy.
  */
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { armarAnexos } from './anexos.mjs';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const hoy = new Date().toISOString().slice(0, 10);
@@ -75,8 +76,11 @@ movs.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.proveedo
 const anexos = [], porRuta = new Map();
 for (const m of movs) {
   m.anexos = [...new Set(m.soportes.map(s => {
-    if (!porRuta.has(s.ruta)) { const a = { n: anexos.length + 1, s, mov: m }; porRuta.set(s.ruta, a); anexos.push(a); }
-    return porRuta.get(s.ruta).n;
+    if (!porRuta.has(s.ruta)) {
+      const a = { s, mov: m, url: s.url, tipo: s.tipo, titulo: s.descripcion || s.nombre, linea: `${fecha(m.fecha)} · ${m.proveedor.split(' · ')[0]} · ${plata(m.valor)}` };
+      porRuta.set(s.ruta, a); anexos.push(a);
+    }
+    return porRuta.get(s.ruta);
   }))];
 }
 
@@ -91,12 +95,12 @@ for (const m of movs) {
 }
 const filaTot = ([k, x], etiqueta) => `<tr><td>${esc(etiqueta)}</td><td class="n">${plata(x.v)}</td><td class="n">${plata(x.s)}</td><td class="n ${x.v - x.s > 0 ? 'falta' : ''}">${x.v - x.s > 0 ? plata(x.v - x.s) : '—'}</td></tr>`;
 
-const filas = movs.map((m, i) => `
+const construir = () => { const filas = movs.map((m, i) => `
   <tr class="mov"><td class="c">${i + 1}</td><td class="c">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
-    <td>${esc(m.cuenta)}</td><td class="n"><b>${plata(m.valor)}</b></td><td class="c">${m.anexos.length ? m.anexos.join(', ') : '<span class="falta">Sin soporte</span>'}</td></tr>
+    <td>${esc(m.cuenta)}</td><td class="n"><b>${plata(m.valor)}</b></td><td class="c">${m.anexos.length ? m.anexos.map(a => a.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>'}</td></tr>
   ${m.productos.length ? `<tr class="det"><td></td><td colspan="6"><table class="items"><colgroup><col><col style="width:22%"></colgroup>${m.productos.map(x => `<tr><td>${esc(x.concepto)}</td><td class="n">${plata(num(x.valor_total))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
 
-const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${TITULO}</title><style>
+return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${TITULO}</title><style>
 @page{size:Letter;margin:16mm 14mm 18mm}
 body{font-family:Arial,Helvetica,sans-serif;color:#1a1f14;font-size:10.5pt;line-height:1.4}
 h1{font-size:20pt;margin:0;color:#2A4F08}h2{font-size:13pt;color:#2A4F08;border-bottom:2px solid #639922;padding-bottom:3px;margin:16px 0 6px;break-after:avoid}
@@ -133,63 +137,28 @@ ${Object.entries(porCuenta).sort((a, b) => b[1].v - a[1].v).map(e => filaTot(e, 
 <tr class="tot"><th>Total</th><th class="n">${plata(total)}</th><th class="n">${plata(conSop)}</th><th class="n">${plata(total - conSop)}</th></tr></table>
 ${SOLO_COMPRAS ? '' : '<div class="pie">«Por verificar» son transferencias a Andrés Felipe Escobar (Nequi 318 540 5823) para gastos de la finca, pendientes de detallar.</div>'}
 
-<h2 style="break-before:page">4. Detalle de gastos (en orden de fecha)</h2>
+<h2>4. Detalle de gastos (en orden de fecha)</h2>
 <table class="gastos"><colgroup><col style="width:5%"><col style="width:11%"><col style="width:16%"><col style="width:35%"><col style="width:14%"><col style="width:11%"><col style="width:8%"></colgroup>
 <tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th>Cuenta</th><th class="n">Valor</th><th class="c">Anexo</th></tr>
 ${filas}
 <tr><th colspan="5">Total</th><th class="n">${plata(total)}</th><th></th></tr></table>
 
-${anexos.length ? `<h2 style="break-before:page">Índice de anexos</h2><table class="indice"><colgroup><col style="width:8%"><col style="width:52%"><col style="width:40%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.length ? `<h2>Índice de anexos</h2><table class="indice"><colgroup><col style="width:8%"><col style="width:52%"><col style="width:40%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
 ${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.s.descripcion || a.s.nombre)}</td><td>${fecha(a.mov.fecha)} · ${esc(a.mov.proveedor.split(' · ')[0])} · ${plata(a.mov.valor)}</td></tr>`).join('')}</table>
-<div class="pie">Los anexos van a continuación, en este mismo orden.</div>` : ''}
+<div class="pie">Los anexos van a continuación, en orden de número.</div>` : ''}
 <div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
-</body></html>`;
+</body></html>`; };
 
-/* Recorta el blanco de cada página de soporte; si queda una tirilla muy larga la parte en tramos (máx. 4) */
-const PY_TIRAS = `
-import sys, json, math
-from PIL import Image
-im = Image.open(sys.argv[1]).convert('RGB')
-caja = im.convert('L').point(lambda v: 255 if v < 245 else 0).getbbox()
-if caja: im = im.crop((max(0, caja[0]-12), max(0, caja[1]-12), min(im.width, caja[2]+12), min(im.height, caja[3]+12)))
-n = min(4, math.ceil(im.height / im.width / 2.6)) if im.height / im.width > 2.9 else 1
-alto = math.ceil(im.height / n); sal = []
-for k in range(n):
-    f = f'{sys.argv[2]}{k}.jpg'; im.crop((0, k*alto, im.width, min(im.height, (k+1)*alto))).save(f, quality=82); sal.append(f)
-print(json.dumps(sal))
-`;
-/* ── PDF: informe + anexos (cada anexo con una franja que dice su número) ── */
+/* ── PDF: informe y anexos en un solo documento; los anexos llenan cada hoja (ver informes/anexos.mjs) ── */
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'finca-'));
+const AX = await armarAnexos(anexos, { tmp, esc });
+anexos.sort((x, y) => x.n - y.n);
+const html = construir().replace('</body></html>', `${AX.css}${AX.html}</body></html>`);
 const navegador = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
 const pag = await navegador.newPage();
-const pie = t => `<div style="font-size:7pt;color:#888;width:100%;text-align:center;font-family:Arial">${t} · página <span class="pageNumber"></span> de <span class="totalPages"></span></div>`;
 await pag.setContent(html, { waitUntil: 'networkidle' });
-const partes = [path.join(tmp, '000-informe.pdf')];
-await pag.pdf({ path: partes[0], format: 'Letter', printBackground: true, displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: pie(`${TITULO} · Finca El Retiro`) });
-for (const a of anexos) {
-  const r = await fetch(a.s.url); if (!r.ok) { console.warn(`No se pudo bajar el anexo ${a.n}: ${a.s.url}`); continue; }
-  const buf = Buffer.from(await r.arrayBuffer()), base = path.join(tmp, `a${String(a.n).padStart(3, '0')}`);
-  let imgs = [];
-  if (a.s.tipo === 'application/pdf') {
-    fs.writeFileSync(base + '.pdf', buf);
-    execFileSync('pdftoppm', ['-r', '110', '-jpeg', base + '.pdf', base]);
-    imgs = fs.readdirSync(tmp).filter(f => f.startsWith(path.basename(base) + '-') && f.endsWith('.jpg')).sort().map(f => path.join(tmp, f));
-  } else { fs.writeFileSync(base + '.img', buf); imgs = [base + '.img']; }
-  const cab = `<div style="font:8.5pt Arial;background:#EAF3DE;border-left:3px solid #639922;padding:3px 6px;margin-bottom:3mm"><b>Anexo ${a.n}</b> · ${esc(a.s.descripcion || a.s.nombre)}<br><span style="color:#5a6a4a">${fecha(a.mov.fecha)} · ${esc(a.mov.proveedor.split(' · ')[0])} · ${plata(a.mov.valor)}</span></div>`;
-  const img64 = f => `data:image/jpeg;base64,${fs.readFileSync(f).toString('base64')}`;
-  const cuerpo = imgs.map((f, k) => {
-    const pz = JSON.parse(execFileSync('python3', ['-c', PY_TIRAS, f, `${f}_t`]).toString());
-    const ver = pz.length > 1   // tirilla larga: los tramos van en columnas, uno al lado del otro
-      ? `<div style="display:grid;grid-template-columns:repeat(${pz.length},1fr);gap:4mm;align-items:start">${pz.map(x => `<img style="width:100%;border:1px solid #ccc" src="${img64(x)}">`).join('')}</div>`
-      : `<img style="max-width:100%;max-height:225mm;border:1px solid #ccc" src="${img64(pz[0])}">`;
-    return `<div style="${k ? 'break-before:page;' : ''}text-align:center">${cab.replace('</b>', imgs.length > 1 ? ` (página ${k + 1} de ${imgs.length})</b>` : '</b>')}${ver}</div>`;
-  }).join('');
-  await pag.setContent(`<!doctype html><html><body style="margin:0">${cuerpo}</body></html>`, { waitUntil: 'load' });
-  const sal = base + '-anexo.pdf';
-  await pag.pdf({ path: sal, format: 'Letter', margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' } });
-  partes.push(sal);
-}
-await navegador.close();
 fs.mkdirSync(path.dirname(SALIDA), { recursive: true });
-if (partes.length > 1) execFileSync('pdfunite', [...partes, SALIDA]); else fs.copyFileSync(partes[0], SALIDA);
+await pag.pdf({ path: SALIDA, format: 'Letter', printBackground: true, displayHeaderFooter: true, headerTemplate: '<span></span>',
+  footerTemplate: `<div style="font-size:7pt;color:#888;width:100%;text-align:center;font-family:Arial">${TITULO} · Finca El Retiro · página <span class="pageNumber"></span> de <span class="totalPages"></span></div>` });
+await navegador.close();
 console.log(`Informe listo: ${SALIDA}\n${movs.length} gastos · ${anexos.length} anexos · total ${plata(total)} · con soporte ${plata(conSop)}`);
