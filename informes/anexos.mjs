@@ -28,7 +28,7 @@ if len(filas) and len(cols):
     m = 10
     im = im.crop((max(0, cols[0]-m), max(0, filas[0]-m), min(im.width, cols[-1]+m), min(im.height, filas[-1]+m)))
     g = np.asarray(im.convert('L'))
-# espacios blancos grandes por dentro (facturas con medio papel vacío): se dejan de 18 px
+# espacios blancos grandes por dentro (facturas con medio papel vacío): se dejan de 14 px
 # una fila cuenta como vacía aunque la crucen líneas verticales de tabla (menos del 1,5 % con tinta)
 vacia = (g < 200).mean(axis=1) < 0.015
 partes, y, n = [], 0, len(vacia)
@@ -36,7 +36,7 @@ while y < n:
     if vacia[y]:
         z = y
         while z < n and vacia[z]: z += 1
-        partes.append((y, min(z, y + 18)) if z - y > 45 else (y, z)); y = z
+        partes.append((y, min(z, y + 14)) if z - y > 28 else (y, z)); y = z
     else:
         z = y
         while z < n and not vacia[z]: z += 1
