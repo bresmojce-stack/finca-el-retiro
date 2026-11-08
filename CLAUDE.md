@@ -46,7 +46,8 @@ Se habla siempre en español, claro y sin tecnicismos.
 ## Informe del préstamo (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe.mjs`
 - Textos editables en `informes/prestamo_invernadero.json` (crédito, descripción de la obra, fotos, sección de cultivo; `incluir_consumos_de_bodega` debe quedar en `false`).
-- Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla.
+- Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla ni quedar hojas en blanco o casi vacías.
+- Los anexos de los dos informes se acomodan con `informes/anexos.mjs`: llena cada hoja (comprobantes y tirillas lado a lado, facturas reducidas hasta 72 % para que quepan dos), quita los blancos internos y numera los anexos en el orden impreso.
 
 ## Informe de gastos de la finca (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_finca.mjs`
