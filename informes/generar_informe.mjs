@@ -37,8 +37,10 @@ async function api(tabla, filtro) {
 
 /* ── datos ── */
 const P = CFG.proyecto_id;
-const [[pr], compras, jornales, soportes] = await Promise.all([
-  api('proyectos', `id=eq.${P}`), api('compras', `proyecto_id=eq.${P}`), api('jornales', `proyecto_id=eq.${P}`), api('soportes', `proyecto_id=eq.${P}`)
+const [[pr], compras, jornales, soportes, cuotas] = await Promise.all([
+  api('proyectos', `id=eq.${P}`), api('compras', `proyecto_id=eq.${P}`), api('jornales', `proyecto_id=eq.${P}`), api('soportes', `proyecto_id=eq.${P}`),
+  /* Cuotas pagadas al banco: se anotan en la finca con la cuenta «Pago crédito» */
+  api('compras', `categoria=eq.${encodeURIComponent('Pago crédito')}&order=fecha_compra`)
 ]);
 const esCultivo = c => (CFG.cultivo?.rubros || []).includes(c.rubro) || (CFG.cultivo?.incluir_consumos_de_bodega && c.origen === 'consumo');
 const movs = [
@@ -145,6 +147,11 @@ tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.3pt;table-la
   ? `Se invirtió el <b>100 % del dinero desembolsado</b>${CFG.mostrar_recursos_propios && propios > 0 ? ` y además <b>${plata(propios)}</b> de recursos propios` : ''}.`
   : `Se ha invertido el <b>${Math.round(total / desembolsado * 1000) / 10} %</b> del dinero desembolsado.`}
   ${movs.length} gastos registrados · ${movs.filter(m => m.soportes.length).length} con soporte documental (facturas, comprobantes y transferencias en los anexos).</div>
+
+${cuotas.length ? `<h3 style="font-size:11pt;color:#2A4F08;margin:16px 0 6px">Pagos al banco</h3>
+<table class="resumen"><tr><th>Cuota</th><th>Fecha de pago</th><th class="n">Valor pagado</th></tr>
+${cuotas.map((c, i) => `<tr><td>Cuota ${i + 1}${CFG.credito.cuotas ? ' de ' + CFG.credito.cuotas : ''}</td><td>${fechaLarga(c.fecha_compra)}</td><td class="n">${plata(num(c.valor_total))}</td></tr>`).join('')}
+${CFG.credito.cuotas ? `<tr class="tot"><td colspan="2">Cuotas pagadas: ${cuotas.length} · faltan ${CFG.credito.cuotas - cuotas.length}</td><td class="n">${plata(suma(cuotas.map(c => ({ valor: num(c.valor_total) }))))}</td></tr>` : ''}</table>` : ''}
 
 <h2>2. Descripción de la obra</h2>
 ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
