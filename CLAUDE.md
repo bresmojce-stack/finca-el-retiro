@@ -46,6 +46,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 ## Informe del préstamo (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe.mjs`
 - Textos editables en `informes/prestamo_invernadero.json` (crédito, descripción de la obra, fotos, sección de cultivo; `incluir_consumos_de_bodega` debe quedar en `false`).
+- El informe del préstamo lleva además el estado y los pagos del crédito (cuotas de la cuenta `Pago crédito`, saldos certificados en `estado_credito.saldos`) y la petición al banco por el sismo con su respuesta (`peticion_sismo`). Documentos que no son gastos van en `documentos_credito` (aviso de cuota, correo, petición, respuesta).
 - Portada común de los dos informes: `informes/portada.mjs` (misma foto: `foto_portada` de `prestamo_invernadero.json`). El estado del crédito que certifica el banco va en `estado_credito` del JSON.
 - Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla ni quedar hojas en blanco o casi vacías.
 - Los anexos de los dos informes se acomodan con `informes/anexos.mjs`: llena cada hoja (comprobantes y tirillas lado a lado, facturas reducidas hasta 72 % para que quepan dos), quita los blancos internos y numera los anexos en el orden impreso.
@@ -53,7 +54,8 @@ Se habla siempre en español, claro y sin tecnicismos.
 ## Informe del crédito de la siembra (PDF tamaño carta)
 - Segundo crédito Banco Agrario N° 725069400241061 (FINAGRO siembra): capital $13.500.000, descuento $481.360, desembolsado $13.018.640 el 05/05/2026 en la misma cuenta *6101. No es un proyecto en la app: sus gastos son de la finca.
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_siembra.mjs` (datos en `informes/credito_siembra.json`).
-- Contiene (decisión de Brian, 08/11/2026): semillas y plántulas de tomate, insumos agrícolas con factura desde el desembolso, mano de obra (jornales de los cultivos) y los envíos a Andrés desde la cuenta del crédito (mano de obra, estacas, alambre, transporte) con su aviso del banco.
+- Contiene (decisión de Brian, 08/11/2026, opción 2): jornales de los cultivos (pagados en efectivo, sin soporte), semillas y plántulas de tomate con factura, y facturas completas de insumos en orden de fecha desde el desembolso hasta completar lo desembolsado. Lo demás que se pagó de más queda en el informe de la finca (recursos propios). Los envíos a Andrés no van.
+- Escribe `informes/siembra_presentado.json` (ids presentados al banco); el informe de la finca marca esos gastos «Presentado al banco · crédito de la siembra». Subirlo al repo cada vez que se regenere.
 - Los dos informes para el Banco Agrario son el del invernadero y el de la siembra.
 
 ## Informe de gastos de la finca (PDF tamaño carta)

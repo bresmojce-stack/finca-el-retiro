@@ -22,7 +22,7 @@
     "Sistema de riego por goteo con cinta Pathfinder, tubería PVC de presión, motobomba e inyector Venturi para fertirriego.",
     "Construcción contratada a $6.500 por m² con Jesús Alveiro Mera Pechene, más mano de obra contratada en El Retiro."
   ],
-  "nota_reparacion": "El sismo del 10 de agosto de 2026 (declarado situación de desastre nacional) quebró más de 40 guaduas de la estructura y arrancó la cubierta de una nave completa. Para repararla se compró guadua y plástico adicionales (gastos de septiembre y octubre de este informe). El 28/09/2026 se radicó ante el banco la petición N° 2026080633; el banco respondió el 19/10/2026 (ver anexos).",
+  "nota_reparacion": "El sismo del 10 de agosto de 2026 (declarado situación de desastre nacional) quebró más de 40 guaduas de la estructura y arrancó la cubierta de una nave completa. Para repararla se compró guadua y plástico adicionales (gastos de septiembre y octubre de este informe). El 27/09/2026 se pidió al banco un alivio por el sismo (radicado N° 2026080633); el banco no lo concedió (ver sección «Petición al banco por los daños del sismo»).",
   "cultivo": {
     "_ayuda": "Gastos pagados con el préstamo para poner en marcha el primer cultivo del invernadero (no los insumos de la bodega de la finca, que son cuentas aparte).",
     "titulo": "Puesta en marcha del primer cultivo",
@@ -102,7 +102,22 @@
     "_ayuda": "Lo que certificó el banco por escrito (respuesta al caso 2026080633). Actualizar cuando llegue un documento más reciente.",
     "fecha": "2026-10-19",
     "fuente": "Banco Agrario de Colombia · respuesta al caso N° 2026080633 (19/10/2026)",
-    "texto": "La obligación 7250****1371 registra cero (0) días de mora; capital $46.752.500 e intereses corrientes $3.483.222 a esa fecha. El mismo 19/10/2026 se pagó la cuota 1 por $4.256.862 (transacción 5069024)."
+    "texto": "La obligación 7250****1371 registra cero (0) días de mora; capital $46.752.500 e intereses corrientes $3.483.222 a esa fecha. El mismo 19/10/2026 se pagó la cuota 1 por $4.256.862 (transacción 5069024).",
+    "saldos": [
+      {
+        "obligacion": "7250****1371 · invernadero (este crédito)",
+        "capital": 46752500,
+        "intereses": 3483222,
+        "mora": 0
+      },
+      {
+        "obligacion": "7250****1061 · siembra",
+        "capital": 13500000,
+        "intereses": 437660,
+        "mora": 0
+      }
+    ],
+    "nota": "Con corte al 19 de octubre de 2026 las dos obligaciones registran cero (0) días de mora. El capital no ha bajado porque el crédito tiene 360 días de gracia a capital; la cuota 1 pagada ese mismo día cubrió intereses."
   },
   "titulo_fotos_sismo": "Daños causados por el sismo del 10 de agosto de 2026",
   "fotos_sismo": [
@@ -126,5 +141,48 @@
       "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_5.jpg",
       "titulo": "Vista general de la nave afectada."
     }
-  ]
+  ],
+  "documentos_credito": {
+    "_ayuda": "Documentos del crédito que van en los anexos sin ser gastos del préstamo.",
+    "cuota1": {
+      "url": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/bodega/1793040169000-Aviso_pago_cuota1_credito_1371.pdf",
+      "tipo": "application/pdf",
+      "descripcion": "Banco Agrario · aviso de pago de la cuota 1 del crédito *1371 (19/10/2026, transacción 5069024, $4.256.862)"
+    },
+    "correo": {
+      "url": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/peticion_sismo_2026-09-27_correo_radicado_2026080633.png",
+      "tipo": "image/png",
+      "descripcion": "Correo de la petición al banco (27/09/2026) y respuesta con el radicado N° 2026080633 (transcripción del hilo de Gmail)"
+    },
+    "peticion": {
+      "url": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/peticion_sismo_2026-09-27_derecho_de_peticion.pdf",
+      "tipo": "application/pdf",
+      "descripcion": "Derecho de petición por la afectación del sismo del 10/08/2026 (documento enviado al banco)"
+    },
+    "respuesta": {
+      "url": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/banco_agrario_respuesta_caso_2026080633.pdf",
+      "tipo": "application/pdf",
+      "descripcion": "Banco Agrario · respuesta caso 2026080633 (19/10/2026)"
+    }
+  },
+  "peticion_sismo": {
+    "enviada": "27 de septiembre de 2026, 21:00 · correo a servicio.cliente@bancoagrario.gov.co, asunto «radicacion peticion por afectacion sismo 10 de agosto 2026»",
+    "radicado": "2026080633",
+    "radicado_fecha": "confirmado por el banco el 28/09/2026, con respuesta para el 19/10/2026",
+    "creditos": "725069400241371 (invernadero) y 725069400241061 (siembra)",
+    "documento": "Derecho de petición en interés particular (Constitución art. 23 y Ley 1755 de 2015)",
+    "pedido": [
+      "Suspender y congelar temporalmente los plazos de pago de las cuotas de los dos créditos por la emergencia del sismo.",
+      "Acoger los créditos a los programas de normalización, prórroga o refinanciación, con periodo de gracia de hasta 12 meses, para reconstruir la postería de guadua y la nave plástica.",
+      "No reportar a centrales de riesgo los saldos que entraran en mora a partir del sismo."
+    ],
+    "respuesta_fecha": "19 de octubre de 2026",
+    "respuesta": [
+      "Los dos créditos registran cero (0) días de mora al 19/10/2026.",
+      "La suspensión o congelación de pagos no es automática: queda sujeta a evaluación y aprobación de las áreas del banco según la capacidad de pago y los soportes. El banco está implementando las medidas del Gobierno para los afectados por el sismo y las informará cuando entren en operación.",
+      "Ofrece alternativas de normalización (mejoramiento de perfil, redefinición de condiciones, unificación de obligaciones, consolidación de pasivos) que se tramitan en la oficina, y pide la certificación de afectación de la UNGRD.",
+      "Reporta mes a mes el comportamiento del crédito a las centrales de riesgo (Ley 1266 de 2008)."
+    ],
+    "conclusion": "El banco no concedió el alivio pedido. Por eso la reparación del invernadero se pagó con recursos propios (guadua y plástico de septiembre y octubre, en este informe) y la cuota 1 se pagó a tiempo el mismo 19 de octubre de 2026: el crédito sigue al día."
+  }
 }

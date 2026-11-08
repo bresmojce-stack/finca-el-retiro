@@ -61,6 +61,14 @@ const anexos = [];
 movs.forEach(m => m.soportes.forEach(s => { s.n = anexos.length + 1; anexos.push(Object.assign(s, { mov: m })); }));
 const generales = soportes.filter(s => !s.compra_id && !s.jornal_id);
 generales.forEach(s => { s.n = anexos.length + 1; anexos.push(Object.assign(s, { mov: null })); });
+/* Documentos del crédito que no son gastos del préstamo: aviso de pago de cuotas, petición por el sismo y su correo */
+const docCredito = {};
+for (const [k, d] of Object.entries(CFG.documentos_credito || {}).filter(([k]) => !k.startsWith("_"))) {
+  const ya = anexos.find(a => a.url === d.url);
+  docCredito[k] = ya || Object.assign({ ...d, nombre: d.descripcion, mov: null }, { n: anexos.length + 1 });
+  if (!ya) anexos.push(docCredito[k]);
+}
+const nAnexo = k => docCredito[k] ? `anexo ${docCredito[k].n}` : '';
 
 /* Forma de pago leída del texto del gasto */
 const formaPago = m => {
@@ -113,7 +121,7 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}.nw{wh
 .barra{height:10px;background:#639922;border-radius:2px}
 .gastos{font-size:8.8pt;table-layout:fixed}.gastos td,.gastos th{padding:4px 5px;overflow-wrap:break-word}.gastos tr.mov td{vertical-align:middle}.gastos td.n{overflow-wrap:normal}.gastos tr.mov td{background:#FAFCF6}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.3pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px;vertical-align:top}
-.falta{color:#B07010;font-style:italic}.indice{font-size:8pt}.indice td,.indice th{padding:2px 5px}.indice td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.falta{color:#B07010;font-style:italic}.indice{font-size:8pt;line-height:1.2}.indice td,.indice th{padding:1.5px 5px}.indice td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fotos{display:flex;flex-wrap:wrap;justify-content:space-between;row-gap:12px}.fotos figure{margin:0;width:49%;break-inside:avoid;page-break-inside:avoid}.fotos img{width:100%;height:61mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
 .fotos3 figure{width:32%}.fotos3 img{height:52mm}.h3{font-size:11pt;color:#2A4F08;margin:14px 0 6px}
 .firma{margin-top:60px;width:70mm;border-top:1px solid #111;padding-top:5px}
@@ -143,37 +151,57 @@ ${portada({ esc, lugar: CFG.finca, titulo: CFG.titulo, subtitulo: CFG.subtitulo,
   : `Se ha invertido el <b>${Math.round(total / desembolsado * 1000) / 10} %</b> del dinero desembolsado.`}
   ${movs.length} gastos registrados · ${movs.filter(m => m.soportes.length).length} con soporte documental (facturas, comprobantes y transferencias en los anexos).</div>
 
-${cuotas.length ? `<h3 style="font-size:11pt;color:#2A4F08;margin:16px 0 6px">Pagos al banco</h3>
-<table class="resumen"><tr><th>Cuota</th><th>Fecha de pago</th><th class="n">Valor pagado</th></tr>
-${cuotas.map((c, i) => `<tr><td>Cuota ${i + 1}${CFG.credito.cuotas ? ' de ' + CFG.credito.cuotas : ''}</td><td>${fechaLarga(c.fecha_compra)}</td><td class="n">${plata(num(c.valor_total))}</td></tr>`).join('')}
-${CFG.credito.cuotas ? `<tr class="tot"><td colspan="2">Cuotas pagadas: ${cuotas.length} · faltan ${CFG.credito.cuotas - cuotas.length}</td><td class="n">${plata(suma(cuotas.map(c => ({ valor: num(c.valor_total) }))))}</td></tr>` : ''}</table>` : ''}
+${(() => { const E = CFG.estado_credito, Pe = CFG.peticion_sismo, cr = CFG.credito, pagado = suma(cuotas.map(c => ({ valor: num(c.valor_total) })));
+  return `<h2>2. Estado y pagos del crédito</h2>
+<table class="resumen"><colgroup><col style="width:45%"><col></colgroup>
+  <tr><td>Crédito N°</td><td><b>${esc(cr.numero)}</b> · ${esc(cr.linea)}</td></tr>
+  <tr><td>Monto aprobado / desembolsado</td><td>${plata(monto)} · desembolsado ${plata(desembolsado)} el ${pr.fecha_desembolso ? fechaLarga(pr.fecha_desembolso) : '—'}</td></tr>
+  <tr><td>Plazo y forma de pago</td><td>${esc(cr.plazo)} · tasa ${esc(cr.tasa)}</td></tr>
+</table>
+<h3 class="h3">Cuotas pagadas</h3>
+<table class="resumen"><tr><th>Cuota</th><th>Fecha de pago</th><th>Desde</th><th>Comprobante</th><th class="n">Valor pagado</th></tr>
+${cuotas.map((c, i) => `<tr><td>Cuota ${i + 1} de ${cr.cuotas}</td><td>${fechaLarga(c.fecha_compra)}</td><td>Cuenta Banco Agrario *6101</td><td>${esc((c.concepto.match(/transacci[oó]n (\d+)/) || [, ''])[1] ? 'Transacción ' + c.concepto.match(/transacci[oó]n (\d+)/)[1] : '')}${i === 0 && docCredito.cuota1 ? ` · ${nAnexo('cuota1')}` : ''}</td><td class="n">${plata(num(c.valor_total))}</td></tr>`).join('')}
+<tr class="tot"><td colspan="4">Pagadas ${cuotas.length} de ${cr.cuotas} · faltan ${cr.cuotas - cuotas.length} cuotas semestrales (fechas según el plan de pagos del banco)</td><td class="n">${plata(pagado)}</td></tr></table>
+${E ? `<h3 class="h3">Saldo certificado por el banco (corte ${fechaLarga(E.fecha)})</h3>
+<table class="resumen"><tr><th>Obligación</th><th class="n">Capital</th><th class="n">Intereses corrientes</th><th class="n">Días de mora</th></tr>
+${(E.saldos || []).map(x => `<tr><td>${esc(x.obligacion)}</td><td class="n">${plata(x.capital)}</td><td class="n">${plata(x.intereses)}</td><td class="n">${x.mora}</td></tr>`).join('')}</table>
+<div class="destacado"><b>El crédito está al día.</b> ${esc(E.nota || '')} <span class="sub">Fuente: ${esc(E.fuente)}${docCredito.respuesta ? ` (${nAnexo('respuesta')})` : ''}.</span></div>` : ''}`; })()}
 
-${CFG.estado_credito ? `<div class="destacado"><b>Estado del crédito según el banco (${fecha(CFG.estado_credito.fecha)}):</b> ${esc(CFG.estado_credito.texto)} <span class="sub">Fuente: ${esc(CFG.estado_credito.fuente)}.</span></div>` : ''}
-
-<h2>2. Descripción de la obra</h2>
+<h2>3. Descripción de la obra</h2>
 ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
 ${CFG.nota_reparacion ? `<div class="destacado">${esc(CFG.nota_reparacion)}</div>` : ''}
 
-<h2>3. Detalle de gastos de la construcción (en orden de fecha)</h2>
+<h2>4. Detalle de gastos de la construcción (en orden de fecha)</h2>
 <table class="gastos"><colgroup><col style="width:5%"><col style="width:12%"><col style="width:16%"><col style="width:32%"><col style="width:13%"><col style="width:13%"><col style="width:9%"></colgroup><tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th class="c">Pago</th><th class="n">Valor</th><th class="c">Anexo</th></tr>
 ${filas(obra, 1)}
 <tr><th colspan="5">Total construcción</th><th class="n">${plata(totalObra)}</th><th></th></tr></table>
 
-${cultivo.length ? `<h2>4. ${esc(CFG.cultivo.titulo)}</h2>
+${cultivo.length ? `<h2>5. ${esc(CFG.cultivo.titulo)}</h2>
 <table class="gastos"><colgroup><col style="width:5%"><col style="width:12%"><col style="width:16%"><col style="width:32%"><col style="width:13%"><col style="width:13%"><col style="width:9%"></colgroup><tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th class="c">Pago</th><th class="n">Valor</th><th class="c">Anexo</th></tr>
 ${filas(cultivo, obra.length + 1)}
 <tr><th colspan="5">Total</th><th class="n">${plata(totalCultivo)}</th><th></th></tr></table>` : ''}
 
-${fotosObra.length ? `<h2>${cultivo.length ? 5 : 4}. Registro fotográfico de la obra</h2>
+${fotosObra.length ? `<h2>${cultivo.length ? 6 : 5}. Registro fotográfico de la obra</h2>
 <div class="fotos">${fotosObra.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 ${fotosSismo.length ? `<h3 class="h3">${esc(CFG.titulo_fotos_sismo || 'Daños del sismo')}</h3>
 <div class="fotos fotos3">${fotosSismo.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 
-${anexos.length ? `<div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
-${anexos.slice(0, 5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table></div>${anexos.length > 5 ? `<table class="gastos indice" style="margin-top:-1px"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup>${anexos.slice(5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}` : ''}
+${CFG.peticion_sismo ? (() => { const Pe = CFG.peticion_sismo; return `<h2>${cultivo.length ? 7 : 6}. Petición al banco por los daños del sismo</h2>
+<table class="resumen"><colgroup><col style="width:30%"><col></colgroup>
+  <tr><td>Enviada</td><td>${esc(Pe.enviada)}${docCredito.correo ? ` · ${nAnexo('correo')}` : ''}</td></tr>
+  <tr><td>Radicado del banco</td><td><b>N° ${esc(Pe.radicado)}</b> · ${esc(Pe.radicado_fecha)}</td></tr>
+  <tr><td>Créditos</td><td>${esc(Pe.creditos)}</td></tr>
+  <tr><td>Documento</td><td>${esc(Pe.documento)}${docCredito.peticion ? ` · ${nAnexo('peticion')}` : ''}</td></tr>
+</table>
+<h3 class="h3">Qué se pidió</h3><ol>${Pe.pedido.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+<h3 class="h3">Qué respondió el banco (${esc(Pe.respuesta_fecha)}${docCredito.respuesta ? `, ${nAnexo('respuesta')}` : ''})</h3><ol>${Pe.respuesta.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+<div class="destacado">${esc(Pe.conclusion)}</div>`; })() : ''}
 
-${CFG.firma ? `<div class="firma" style="margin-top:40px"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
+${CFG.firma ? `<div class="firma" style="margin-top:34px"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
 <div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
+${anexos.length ? `<div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:8%"><col style="width:45%"><col style="width:47%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.slice(0, 5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table></div>${anexos.length > 5 ? `<table class="gastos indice" style="margin-top:-1px"><colgroup><col style="width:8%"><col style="width:45%"><col style="width:47%"></colgroup>${anexos.slice(5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}` : ''}
+
 </body></html>`;
 
 /* ── Anexos: hojas carta llenas, sin hojas en blanco (ver informes/anexos.mjs) ── */
