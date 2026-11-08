@@ -50,6 +50,12 @@ Se habla siempre en español, claro y sin tecnicismos.
 - Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla ni quedar hojas en blanco o casi vacías.
 - Los anexos de los dos informes se acomodan con `informes/anexos.mjs`: llena cada hoja (comprobantes y tirillas lado a lado, facturas reducidas hasta 72 % para que quepan dos), quita los blancos internos y numera los anexos en el orden impreso.
 
+## Informe del crédito de la siembra (PDF tamaño carta)
+- Segundo crédito Banco Agrario N° 725069400241061 (FINAGRO siembra): capital $13.500.000, descuento $481.360, desembolsado $13.018.640 el 05/05/2026 en la misma cuenta *6101. No es un proyecto en la app: sus gastos son de la finca.
+- Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_siembra.mjs` (datos en `informes/credito_siembra.json`).
+- Contiene (decisión de Brian, 08/11/2026): semillas y plántulas de tomate, insumos agrícolas con factura desde el desembolso, mano de obra (jornales de los cultivos) y los envíos a Andrés desde la cuenta del crédito (mano de obra, estacas, alambre, transporte) con su aviso del banco.
+- Los dos informes para el Banco Agrario son el del invernadero y el de la siembra.
+
 ## Informe de gastos de la finca (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_finca.mjs`
 - Con `--compras`: solo lo comprado para la finca (sin jornales, Por verificar, cuotas ni Lauro), con sus facturas.
@@ -58,6 +64,5 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Pendientes conocidos
 - Factura de la motobomba de Homecenter ($2.188.400, 24/05, pagada con tarjeta Falabella): hay que pedirla en Homecenter Palmira Unicentro.
-- Hay un segundo crédito Banco Agrario N° 725069400241061 (FINAGRO «Siembra», capital $13.500.000) que no está en la app: preguntar a Brian si se lleva aparte como el del invernadero.
 - Extractos de Nequi de septiembre y octubre para revisar transferencias a Andrés.
 - Verificar con Andrés en qué se gastó cada transferencia "Por verificar".

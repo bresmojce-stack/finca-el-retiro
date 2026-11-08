@@ -80,8 +80,8 @@ export async function armarAnexos(items, { tmp, esc }) {
       const o = run('limpiar', p, `${base}_${k}`);
       const pag = pags.length > 1 ? ` (pág. ${k + 1} de ${pags.length})` : '';
       if (o.a <= 1.45) {
-        /* Factura en PDF: ancho completo. Foto o pantallazo ancho: dos tercios, para que al lado quepa un comprobante */
-        const w = it.tipo === 'application/pdf' ? W : 2 * TERCIO + G;
+        /* Factura en PDF: ancho completo. Foto, pantallazo o aviso del banco: media hoja, dos por fila */
+        const w = it.tipo === 'application/pdf' ? W : (W - G) / 2;
         bloques.push({ it, pag, src: [b64(o.f)], cols: 1, w, imgH: Math.min(w * o.a, H - TITULO - CAB), hoja: true }); return;
       }
       /* Comprobante o tirilla: tarjeta de un tercio (o dos tercios si es muy larga), con la tirilla en tramos */
