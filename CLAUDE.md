@@ -7,7 +7,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Proyecto
 - `index.html`: toda la app (JS sin frameworks). `sw.js`: modo sin conexión.
-- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v13.1).
+- En cada cambio de la app subir `CACHE_VERSION` en `sw.js` y la versión del `<title>` de `index.html` (hoy v13.2).
 - Publicar: trabajar en la rama asignada, push, crear PR y hacer merge a `main` con el MCP de GitHub. Netlify publica `main` en https://finca-el-retiro.netlify.app
 - `informes/`: informe del préstamo en PDF (ver abajo). `informes/salida/` no se sube (está en `.gitignore`).
 
@@ -17,6 +17,8 @@ Se habla siempre en español, claro y sin tecnicismos.
 - Si el servidor rechaza un cambio, queda marcado (no se bota) y se ve tocando el estado de la nube en la barra de arriba (reintentar o descartar).
 - Fotos y soportes se guardan en IndexedDB y se suben con la bandeja (`db.subirArchivo`). Los otros teléfonos se enteran por Supabase Realtime o cada minuto.
 - **Nunca escribir con `sb.from(...).insert/update/delete` en la app**: usar `db.from(...)`.
+- Bodega: entradas y salidas se mandan como suma/resta con `db.ajustarInventario` (función `inv_ajustar` en la base de datos), nunca como "quedan tantos", para que dos teléfonos sin señal no se pisen.
+- Prueba de la sincronización: `node pruebas/sin_senal.mjs` (simula la base de datos; debe terminar en "TODO BIEN"). Correrla antes de publicar si se toca la sincronización o la bodega.
 
 ## Base de datos (Supabase)
 - Proyecto `sueramxzbibijuaamzbi`, URL `https://sueramxzbibijuaamzbi.supabase.co`, llave publicable `sb_publishable_z94UVtLm_UN4rJUuGMGS4w_FwTc79Fc`.

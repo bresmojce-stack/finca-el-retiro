@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#3B6D11">
-<title>Finca El Retiro v13.1</title>
+<title>Finca El Retiro v13.2</title>
 
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
@@ -753,7 +753,6 @@ function convertirUnidad(valor, de, a, bultoKg){
   if (!fd || !fa) return null;
   return valor * fd / fa;
 }
-function esConvertible(u){ const n = normUnidad(u); return !!U_FAM[n]; }
 /* ── FECHAS: todo en hora de Colombia (America/Bogota, UTC-5 sin horario de verano) ── */
 const TZ_FINCA = 'America/Bogota';
 const RX_DIA = /^\d{4}-\d{2}-\d{2}$/;
@@ -780,18 +779,6 @@ function tsDeDia(dia){
 function tsOrden(v){ const s = String(v||''); const t = new Date(RX_DIA.test(s) ? s+'T12:00:00-05:00' : s).getTime(); return isNaN(t) ? 0 : t; }
 /* Valida una fecha que propone la IA: formato correcto y nunca en el futuro */
 function fechaAgente(f){ const s = String(f||'').trim(); if (!RX_DIA.test(s)) return null; return s > fechaLocalISO() ? null : s; }
-/* Calendario de ±7 días para que la IA no calcule "ayer" o "el lunes" de memoria */
-function calendarioCtx(){
-  const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-  const base = new Date(fechaLocalISO() + 'T12:00:00-05:00').getTime();
-  const marcas = { '-2':' ← ANTIER', '-1':' ← AYER', '0':' ← HOY', '1':' ← MAÑANA', '2':' ← PASADO MAÑANA' };
-  const lineas = [];
-  for (let k = -7; k <= 7; k++){
-    const iso = fechaLocalISO(new Date(base + k*86400000));
-    lineas.push(`${dias[new Date(iso+'T12:00:00Z').getUTCDay()]} ${iso}${marcas[k]||''}`);
-  }
-  return lineas.join('\n');
-}
 function fmtFecha(d){ const s = fechaDia(d); if (!s) return ''; try{ return new Date(s+'T12:00:00-05:00').toLocaleDateString('es-CO',{day:'2-digit',month:'short',timeZone:TZ_FINCA}); }catch(e){ return s; } }
 function toDateInput(d){ if(!d) return fechaLocalISO(); return fechaDia(d); }
 function hoyISO(){ return fechaLocalISO(); }
@@ -935,6 +922,12 @@ function _ligar(t, f){
   if (t === 'plagas' && 'registrado_por' in f) f.registrado = { nombre_corto: u(f.registrado_por)?.nombre_corto || '' };
   return f;
 }
+/* Misma cuenta que la función inv_ajustar de la base de datos: suma o resta, nunca pisa lo que hizo otro teléfono */
+function _ajusteInv(x, a){
+  const ing0 = _num(x.total_ingresado) || _num(x.cantidad_actual), ing = ing0 + (a.d_ingreso || 0), pt = _num(x.precio_total) + (a.d_precio || 0);
+  return { cantidad_actual: Math.max(0, _num(x.cantidad_actual) + a.d_cant), total_ingresado: ing, precio_total: pt,
+    costo_unitario: a.d_precio > 0 && ing > 0 ? pt / ing : x.costo_unitario, ultimo_precio: a.p_ultimo ?? x.ultimo_precio, ultimo_precio_fecha: a.p_fecha ?? x.ultimo_precio_fecha };
+}
 const _coincide = (x, f) => f.vals.some(v => String(x[f.col]) === String(v));
 function _aplicarLocal(o){
   const key = TABLA_CACHE[o.t]; if (!key) return;
@@ -946,6 +939,7 @@ function _aplicarLocal(o){
   });
   else if (o.op === 'update') arr.forEach((x, i) => { if (_coincide(x, o.f)) arr[i] = _ligar(o.t, { ...x, ...o.changes, _pendiente: true }); });
   else if (o.op === 'delete') S.cache[key] = arr.filter(x => !_coincide(x, o.f));
+  else if (o.op === 'rpc' && o.fn === 'inv_ajustar') arr.forEach((x, i) => { if (x.id === o.args.p_id) arr[i] = { ...x, ..._ajusteInv(x, o.args), _pendiente: true }; });
   if (o.t === 'lotes') S.cache.lotes = S.cache.lotes.filter(l => l.activo !== false);
 }
 /* Constructor parecido al de Supabase para escribir: db.from('compras').insert(fila).select().single() */
@@ -987,6 +981,12 @@ const db = {
     Local.cambio();
     return { error:null, url: sb.storage.from(bucket).getPublicUrl(ruta).data.publicUrl };
   },
+  /* Bodega: se manda "suma/resta tanto" y no "quedan tantos", para que dos teléfonos sin señal no se pisen */
+  ajustarInventario(id, { cant = 0, ingreso = 0, precio = 0, ultimo = null, fecha = null }){
+    const o = { t:'inventario', op:'rpc', fn:'inv_ajustar', args:{ p_id:id, d_cant:cant, d_ingreso:ingreso, d_precio:precio, p_ultimo:ultimo, p_fecha:fecha } };
+    _aplicarLocal(o); Outbox.agregar(o); Local.cambio();
+    return { error:null };
+  },
   borrarArchivo(bucket, ruta){ Outbox.agregar({ op:'remove', bucket, ruta }); Local.cambio(); }
 };
 const Local = {
@@ -1019,6 +1019,8 @@ const Sync = {
           ({ error, status } = await sb.from(o.t).upsert(filas, { onConflict:'id', ignoreDuplicates:true }));
         } else if (o.op === 'update') ({ error, status } = await sb.from(o.t).update(o.changes).in(o.f.col, o.f.vals));
         else if (o.op === 'delete') ({ error, status } = await sb.from(o.t).delete().in(o.f.col, o.f.vals));
+        // shortcut: si la señal se corta justo después de que el servidor aplicó el ajuste, al reintentar se aplica dos veces. Raro; la bodega se corrige a mano.
+        else if (o.op === 'rpc') ({ error, status } = await sb.rpc(o.fn, o.args));
         else if (o.op === 'upload'){
           const blob = await IDB.get(o.llave);
           if (blob){ const r = await sb.storage.from(o.bucket).upload(o.ruta, blob, { contentType:o.ct, upsert:false }); error = r.error; status = r.error?.statusCode ? +r.error.statusCode : (r.error ? 0 : 200);
@@ -1038,13 +1040,14 @@ const Sync = {
   },
   async todo(){
     if (this.corriendo){ this._otra = true; return; }
-    if (!navigator.onLine){ S.isOnline = false; render(); return; }
+    if (!navigator.onLine){ S.isOnline = false; if (Outbox.pendientes()) this._sinSenal = true; render(); return; }
     this.corriendo = true; this.fallo = '';
     try{
-      const antes = Outbox.pendientes();
+      const venianDeSinSenal = this._sinSenal;
       const n = await this.subir();
       if (!this.fallo) await refreshAll();
-      if (n && antes) toast(`☁️ ${n} cambio(s) subido(s)`);
+      if (n && venianDeSinSenal) toast(`☁️ ${n} cambio(s) guardados sin señal ya se subieron`);
+      this._sinSenal = !!this.fallo && Outbox.pendientes() > 0;
       if (Outbox.conError().length && !this._avisado){ this._avisado = true; toast('⚠️ Hay cambios que no se pudieron subir. Toca la nube arriba para verlos.'); }
     } finally { this.corriendo = false; render(); if (this._otra){ this._otra = false; this.pronto(); } }
   },
@@ -1076,7 +1079,7 @@ const Sync = {
 /* Pantalla de cambios por subir: reintentar o descartar */
 window.verPendientes = async function(){
   const q = Outbox.leer();
-  const nombre = o => ({ insert:'Nuevo', update:'Cambio', delete:'Borrado', upload:'Archivo', remove:'Borrar archivo' }[o.op] || o.op) + ' · ' + (o.t || o.bucket || '');
+  const nombre = o => ({ insert:'Nuevo', update:'Cambio', delete:'Borrado', upload:'Archivo', remove:'Borrar archivo', rpc:'Bodega' }[o.op] || o.op) + ' · ' + (o.t || o.bucket || '');
   const desc = o => o.op === 'insert' ? (o.rows[0]?.concepto || o.rows[0]?.actividad || o.rows[0]?.titulo || o.rows[0]?.descripcion || o.rows[0]?.trabajador || o.rows[0]?.nombre || '') : o.op === 'upload' ? o.ruta.split('/').pop() : '';
   const html = `<div class="modal-h"><i class="ti ti-cloud-upload"></i> Cambios por subir (${q.length})</div>
     <div class="modal-sub">${S.isOnline ? 'Se suben solos cuando hay señal.' : 'Sin señal: están guardados en este teléfono y se suben solos cuando vuelva la señal.'}${Sync.ultimo ? ' Última sincronización: ' + new Date(Sync.ultimo).toLocaleTimeString('es-CO', { hour:'2-digit', minute:'2-digit' }) + '.' : ''}</div>
@@ -1123,17 +1126,8 @@ const HANDLERS = {
     
     if (existing) {
       // Ya existe: sumar cantidad al stock actual y al total ingresado
-      const nuevaActual = parseFloat(existing.cantidad_actual) + parseFloat(i.cantidad);
-      const nuevoTotal  = parseFloat(existing.total_ingresado||existing.cantidad_actual) + parseFloat(i.cantidad);
-      const payload = { cantidad_actual: nuevaActual, total_ingresado: nuevoTotal };
-      if (parseFloat(i.precio_total) > 0){
-        const precioAcum = (parseFloat(existing.precio_total)||0) + parseFloat(i.precio_total);
-        payload.precio_total = precioAcum;
-        payload.costo_unitario = nuevoTotal > 0 ? precioAcum / nuevoTotal : 0;
-        payload.ultimo_precio = parseFloat(i.cantidad) > 0 ? parseFloat(i.precio_total) / parseFloat(i.cantidad) : 0;
-        payload.ultimo_precio_fecha = fechaLocalISO();
-      }
-      const { error } = await db.from('inventario').update(payload).eq('id', existing.id);
+      const cant = parseFloat(i.cantidad) || 0, precio = parseFloat(i.precio_total) > 0 ? parseFloat(i.precio_total) : 0;
+      const { error } = db.ajustarInventario(existing.id, { cant, ingreso: cant, precio, ultimo: precio && cant > 0 ? precio / cant : null, fecha: precio ? fechaLocalISO() : null });
       if (error) return {success:false, msg:'Error BD: ' + error.message};
       return {success:true, msg:`Stock actualizado: +${i.cantidad} ${i.unidad||''} a "${existing.descripcion}"`};
     }
@@ -1165,9 +1159,7 @@ const HANDLERS = {
   use_inventory: async (i) => {
     const item = S.cache.inventory.find(x => x.id == i.id);
     if (!item) return {success:false, msg:'No encontrado'};
-    const nuevaCant = Math.max(0, parseFloat(item.cantidad_actual) - parseFloat(i.cantidad_descontar));
-    const payload = { cantidad_actual: nuevaCant };
-    const { error } = await db.from('inventario').update(payload).eq('id', i.id); 
+    const { error } = db.ajustarInventario(item.id, { cant: -(parseFloat(i.cantidad_descontar) || 0) });
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     return {success:true};
   },
@@ -1243,19 +1235,8 @@ const HANDLERS = {
   restock_inventory: async (id, cantidadAgregar, precioCompra = 0) => {
     const item = S.cache.inventory.find(x => x.id == id);
     if (!item) return {success:false, msg:'No encontrado'};
-    const nuevaActual = parseFloat(item.cantidad_actual) + cantidadAgregar;
-    const nuevoTotal = (parseFloat(item.total_ingresado)||parseFloat(item.cantidad_actual)||0) + cantidadAgregar;
-    const payload = { cantidad_actual: nuevaActual, total_ingresado: nuevoTotal };
-    if (precioCompra > 0){
-      const precioAcum = (parseFloat(item.precio_total)||0) + precioCompra;
-      payload.precio_total = precioAcum;
-      payload.costo_unitario = nuevoTotal > 0 ? precioAcum / nuevoTotal : 0;
-      payload.ultimo_precio = cantidadAgregar > 0 ? precioCompra / cantidadAgregar : 0;
-      payload.ultimo_precio_fecha = fechaLocalISO();
-      item.precio_total = precioAcum; item.costo_unitario = payload.costo_unitario;
-      item.ultimo_precio = payload.ultimo_precio; item.ultimo_precio_fecha = payload.ultimo_precio_fecha;
-    }
-    const { error } = await db.from('inventario').update(payload).eq('id', id);
+    const { error } = db.ajustarInventario(id, { cant: cantidadAgregar, ingreso: cantidadAgregar, precio: precioCompra > 0 ? precioCompra : 0,
+      ultimo: precioCompra > 0 && cantidadAgregar > 0 ? precioCompra / cantidadAgregar : null, fecha: precioCompra > 0 ? fechaLocalISO() : null });
     if (error) return {success:false, msg:'Error BD: ' + error.message};
     return {success:true};
   },
@@ -3682,15 +3663,6 @@ function renderNav(){
   }).join('')}</div>`;
 }
 
-function renderInternet(){
-  return `<div class="panel">
-    <div class="internet-hero">
-      <i class="ti ti-world-search"></i><h3>Búsqueda en internet</h3><p>Consulta información externa rápidamente</p>
-      <div class="search-box"><input type="text" id="internet-search-input" placeholder="¿Qué quieres buscar?"><button class="search-btn" id="btn-internet-search">Buscar</button></div>
-    </div>
-  </div>`;
-}
-
 function buildProactivePanel(){
   const hoyISO = fechaLocalISO();
   const h = horaFinca();
@@ -4441,6 +4413,21 @@ function renderGastosFinca(){
       { abierta: i === 0, resumen: fmtMoney(g.movs.reduce((a,m) => a + m.valor, 0)) })).join('') : `<div class="text-tiny" style="padding:10px 0">No hay gastos con este filtro.</div>`}
   </div>`;
 }
+/* Página de informe para imprimir o guardar en PDF (la usan el informe de la finca y el del préstamo) */
+function abrirPaginaInforme(titulo, cuerpo){
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(titulo)}</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
+.res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n,th.n{text-align:right;white-space:nowrap}
+tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det th{background:#F4F6F0;font-weight:600}
+.fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:150px;object-fit:cover;border:1px solid #ccc}.fotos figcaption{font-size:10px;color:#555}
+.btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
+<button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
+${cuerpo}</body></html>`;
+  const u = URL.createObjectURL(new Blob([html], { type:'text/html' })), w = window.open(u, '_blank');
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+  if (!w) toast('Permite las ventanas emergentes para ver el informe');
+}
 window.informeFinca = function(){
   const f = S.filtroFinca || 'todo', movs = filtrarFinca(movimientosFinca(), f).slice().reverse();
   const etiqueta = (FILTROS_FINCA.find(x => x[0] === f) || [,'Todo'])[1];
@@ -4450,23 +4437,13 @@ window.informeFinca = function(){
   const filas = movs.map((m, i) => `<tr class="fac"><td>${i + 1}</td><td>${fmtFecha(m.fecha)} ${fechaDia(m.fecha).slice(0,4)}</td><td><b>${esc(m.concepto)}</b>${m.factura && m.filas.length < 2 ? '<br>Fact. ' + esc(m.factura) : ''}</td><td>${esc(m.proveedor)}</td><td>${esc([...m.cats].join(', '))}</td><td class="n"><b>${fmtMoney(m.valor)}</b></td>
     <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`
     + (m.filas.length > 1 ? `<tr><td></td><td colspan="6" style="padding:0 0 6px 0;border-top:none"><table class="det"><tr><th>Producto</th><th>Valor</th></tr>${m.filas.map(x => `<tr><td>${esc(x.d)}</td><td class="n">${fmtMoney(x.v)}</td></tr>`).join('')}</table></td></tr>` : '')).join('');
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gastos de la finca · Finca El Retiro</title>
-<style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
-.res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n,th.n{text-align:right;white-space:nowrap}
-tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det th{background:#F4F6F0;font-weight:600}
-.btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
-<button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
-<h1>Gastos de la finca${f === 'todo' ? '' : ' · ' + esc(etiqueta)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca · sin el préstamo del invernadero</div>
+  abrirPaginaInforme('Gastos de la finca · Finca El Retiro', `<h1>Gastos de la finca${f === 'todo' ? '' : ' · ' + esc(etiqueta)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca · sin el préstamo del invernadero</div>
 <div>Informe generado el ${fmtFechaLarga(fechaLocalISO())}</div>
 <div class="res"><div>Total gastado<b>${fmtMoney(total)}</b></div><div>Con soporte<b>${fmtMoney(sumS)}</b></div><div>Sin soporte<b>${fmtMoney(total - sumS)}</b></div><div>Gastos<b>${movs.length}</b></div></div>
 <h2>Por mes</h2><table><tr><th>Mes</th><th class="n">Valor</th></tr>${Object.entries(meses).map(([k,v]) => `<tr><td>${esc(nombreMesFinca(k))}</td><td class="n">${fmtMoney(v)}</td></tr>`).join('')}</table>
 <h2>Por cuenta</h2><table><tr><th>Cuenta</th><th class="n">Valor</th></tr>${Object.entries(cuentas).sort((a,b) => b[1] - a[1]).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${fmtMoney(v)}</td></tr>`).join('')}</table>
 <h2>Detalle por fecha</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Cuenta</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(total)}</th><th></th></tr></table>
-</body></html>`;
-  const u = URL.createObjectURL(new Blob([html], { type:'text/html' })), w = window.open(u, '_blank');
-  setTimeout(() => URL.revokeObjectURL(u), 60000);
-  if (!w) toast('Permite las ventanas emergentes para ver el informe');
+`);
 };
 
 /* Tarjeta en Dinero */
@@ -4725,25 +4702,14 @@ function imprimirPrestamo(p, R){
     <td>${m.soportes.length ? m.soportes.map((s, k) => `<a href="${esc(s.url)}">${s.tipo === 'application/pdf' ? 'Factura PDF' : 'Foto'} ${k + 1}</a>`).join('<br>') : '<b style="color:#C53030">Falta</b>'}</td></tr>`
     + (m.items.length ? `<tr><td></td><td colspan="6" style="padding:0 0 6px 0;border-top:none"><table class="det"><tr><th>Cant.</th><th>Producto</th><th>Rubro</th><th>V. unitario</th><th>Valor</th></tr>${m.items.map(x => `<tr><td class="n">${x.c.toLocaleString('es-CO')}</td><td>${esc(x.d)}</td><td>${esc(x.r)}</td><td class="n">${fmtMoney(x.v / x.c)}</td><td class="n">${fmtMoney(x.v)}</td></tr>`).join('')}<tr><th colspan="4">Total factura</th><th class="n">${fmtMoney(m.valor)}</th></tr></table></td></tr>` : '')).join('');
   const fotos = R.movs.flatMap(m => m.soportes.filter(s => s.tipo !== 'application/pdf').map(s => `<figure><img src="${esc(s.url)}"><figcaption>${fmtFecha(m.fecha)} · ${esc(m.concepto)}</figcaption></figure>`)).join('');
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(p.nombre)} · Finca El Retiro</title>
-<style>body{font-family:Arial,Helvetica,sans-serif;color:#1A1F14;margin:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
-.res{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}.res div{border:1px solid #ccc;border-radius:6px;padding:8px 12px}.res b{display:block;font-size:15px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:5px 6px;text-align:left;vertical-align:top}th{background:#EEF2E8}td.n,th.n{text-align:right;white-space:nowrap}
-tr.fac td{background:#FAFCF6}table.det{margin:4px 0 0 0;font-size:11px}table.det th{background:#F4F6F0;font-weight:600}
-.fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.fotos figure{margin:0;break-inside:avoid}.fotos img{width:100%;height:150px;object-fit:cover;border:1px solid #ccc}.fotos figcaption{font-size:10px;color:#555}
-.btn{position:fixed;top:12px;right:12px;padding:10px 16px;background:#3B6D11;color:#fff;border:0;border-radius:8px;font-size:14px}@media print{.btn{display:none}body{margin:10mm}}</style></head><body>
-<button class="btn" onclick="window.print()">Imprimir / Guardar PDF</button>
-<h1>${esc(p.nombre)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca${p.entidad ? ' · ' + esc(p.entidad) : ''}${lote ? ' · Lote ' + esc(lote.codigo) : ''}</div>
+  abrirPaginaInforme(`${p.nombre} · Finca El Retiro`, `<h1>${esc(p.nombre)}</h1><div>Finca El Retiro · Pradera, Valle del Cauca${p.entidad ? ' · ' + esc(p.entidad) : ''}${lote ? ' · Lote ' + esc(lote.codigo) : ''}</div>
 <div>Informe generado el ${fmtFechaLarga(fechaLocalISO())}${p.fecha_desembolso ? ' · Desembolso: ' + fmtFecha(p.fecha_desembolso) : ''}${p.plazo_meses ? ' · Plazo: ' + p.plazo_meses + ' meses' : ''}</div>
 <div class="res"><div>Monto prestado<b>${R.monto ? fmtMoney(R.monto) : '—'}</b></div>${R.desembolsado ? `<div>Desembolsado real<b>${fmtMoney(R.desembolsado)}</b></div><div>Descontado por el banco<b>${fmtMoney(R.descuento)}</b></div>` : ''}<div>Total invertido<b>${fmtMoney(R.invertido)}</b></div><div>${R.saldo != null && R.saldo < 0 ? 'Puesto con recursos propios' : 'Saldo por invertir'}<b>${R.saldo != null ? fmtMoney(Math.abs(R.saldo)) : '—'}</b></div><div>Gastos con soporte<b>${R.conSoporte} de ${R.movs.length}</b></div></div>
 <h2>Inversión por rubro</h2><table><tr><th>Rubro</th><th>Valor</th><th>%</th></tr>${R.rubros.map(([r, v]) => `<tr><td>${esc(r)}</td><td class="n">${fmtMoney(v)}</td><td class="n">${R.invertido ? Math.round(v / R.invertido * 100) : 0}%</td></tr>`).join('')}<tr><th>Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
 <h2>Detalle de gastos</h2><table><tr><th>#</th><th>Fecha</th><th>Concepto</th><th>Proveedor</th><th>Rubro</th><th>Valor</th><th>Soporte</th></tr>${filas}<tr><th colspan="5">Total</th><th class="n">${fmtMoney(R.invertido)}</th><th></th></tr></table>
 ${fotos ? `<h2>Registro fotográfico</h2><div class="fotos">${fotos}</div>` : ''}
 ${R.generales.length ? `<h2>Documentos del préstamo</h2><ul>${R.generales.map(s => `<li><a href="${esc(s.url)}">${esc(s.nombre || 'Documento')}</a></li>`).join('')}</ul>` : ''}
-</body></html>`;
-  const u = URL.createObjectURL(new Blob([html], { type:'text/html' })), w = window.open(u, '_blank');
-  setTimeout(() => URL.revokeObjectURL(u), 60000);
-  if (!w) toast('Permite las ventanas emergentes para ver el informe');
+`);
 }
 
 function renderDinero(){
@@ -5868,72 +5834,6 @@ async function flowCompleteTask(id){
 /* ═══════════════════════════════════════════════════════════════
    MÓDULO PLAGAS Y ENFERMEDADES
    ═══════════════════════════════════════════════════════════════ */
-function renderPlagas(){
-  const activas = S.cache.plagas.filter(p => p.activa).sort((a,b) => {
-    const ord = {severa:0, moderada:1, leve:2};
-    return (ord[a.severidad]||2) - (ord[b.severidad]||2);
-  });
-  const controladas = S.cache.plagas.filter(p => !p.activa).slice(0,10);
-
-  function plagaCard(p, esControlada){
-    const sev = esControlada ? 'controlada' : (p.severidad||'leve');
-    const icon = sev==='severa'?'ti-alert-triangle':sev==='moderada'?'ti-alert-circle':sev==='controlada'?'ti-circle-check':'ti-bug';
-    const loteNom = p.lote?.codigo || 'Finca general';
-    const ctrl = p.producto_usado ? `<div class="plaga-control"><i class="ti ti-spray"></i> <b>Control:</b> ${esc(p.producto_usado)}${p.dosis?' · '+esc(p.dosis):''} ${p.fecha_control?'('+esc(p.fecha_control)+')':''} ${p.resultado?'· '+esc(p.resultado):''}</div>` : '';
-    const acciones = esControlada ? 
-      `<div class="row gap6"><button class="btn btn-sm btn-ghost" onclick="flowEditPlaga('${p.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button><button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--tx3);padding:4px;border:none"><i class="ti ti-trash"></i></button></div>` :
-      `<div class="row gap6">
-        <button class="btn btn-sm btn-ghost" onclick="flowControlarPlaga('${p.id}','${escA(p.tipo||'')}','${escA(loteNom)}')" style="padding:5px" title="Registrar control"><i class="ti ti-spray"></i> Controlar</button>
-        <button class="btn btn-sm btn-ghost" onclick="flowCerrarPlaga('${p.id}','${escA(p.tipo||'')}')" style="color:var(--g);padding:5px;border:none" title="Marcar controlada"><i class="ti ti-circle-check"></i></button>
-        <button class="btn btn-sm btn-ghost" onclick="flowEditPlaga('${p.id}')" style="padding:4px;border:none" title="Editar"><i class="ti ti-edit"></i></button>
-        <button class="btn btn-sm btn-ghost" onclick="flowDeletePlaga('${p.id}')" style="color:var(--rd);padding:5px;border:none"><i class="ti ti-trash"></i></button>
-      </div>`;
-    return `<div class="plaga-card ${sev}">
-      <div class="plaga-header">
-        <div class="plaga-icon ${sev}"><i class="ti ${icon}"></i></div>
-        <div style="flex:1">
-          <div class="plaga-title">${esc(p.tipo)}</div>
-          <div class="plaga-meta">
-            <span><i class="ti ti-map-pin"></i> ${loteNom}</span>
-            <span><i class="ti ti-calendar"></i> ${p.fecha_deteccion||'—'}</span>
-            ${p.registrado?.nombre_corto?`<span><i class="ti ti-user"></i> ${p.registrado.nombre_corto}</span>`:''}
-          </div>
-        </div>
-        <div class="row gap4" style="flex-shrink:0;align-items:flex-start">
-          <span class="plaga-badge ${sev}">${sev}</span>
-        </div>
-      </div>
-      ${p.descripcion?`<div class="plaga-desc">${clampHTML(p.descripcion,{limit:110})}</div>`:''}
-      ${ctrl}
-      <div style="margin-top:8px;display:flex;justify-content:flex-end">${acciones}</div>
-    </div>`;
-  }
-
-  const activasHtml = activas.length ? activas.map(p=>plagaCard(p,false)).join('') : emptyState('ti-leaf','Sin plagas activas','No hay problemas fitosanitarios registrados.');
-  const controladasHtml = controladas.length ? controladas.map(p=>plagaCard(p,true)).join('') : `<div class="text-tiny" style="padding:10px;text-align:center">Sin registros anteriores.</div>`;
-
-  // Resumen por lote
-  const resumenLotes = S.cache.lotes.map(l => {
-    const pl = S.cache.plagas.filter(p=>p.activa && p.lote_id===l.id);
-    if (!pl.length) return '';
-    const sevCount = pl.filter(p=>p.severidad==='severa').length;
-    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--bd);font-size:12.5px">
-      <span><b>${l.codigo}</b> · ${l.cultivo}</span>
-      <span>${pl.length} plaga${pl.length>1?'s':''}${sevCount?` · <span style="color:var(--rd);font-weight:700">${sevCount} severa${sevCount>1?'s':''}</span>`:''}</span>
-    </div>`;
-  }).filter(Boolean).join('');
-
-  return `<div class="panel">
-    <div class="panel-h">
-      <div class="panel-title"><i class="ti ti-bug" style="color:var(--rd)"></i> Plagas y Enfermedades</div>
-      <button class="btn btn-sm btn-red" onclick="flowNuevaPlaga()"><i class="ti ti-plus"></i> Registrar</button>
-    </div>
-    ${resumenLotes ? `<div class="card" style="margin-bottom:12px;padding:10px 14px"><div class="sec-t" style="margin:0 0 8px"><span>Resumen por lote</span></div>${resumenLotes}</div>` : ''}
-    <div class="sec-t"><span><i class="ti ti-alert-circle"></i> Activas (${activas.length})</span></div>
-    ${activasHtml}
-    ${controladas.length ? `<div class="sec-t mt12"><span><i class="ti ti-circle-check"></i> Controladas recientes</span></div>${controladasHtml}` : ''}
-  </div>`;
-}
 
 window.flowNuevaPlaga = async function(){
   const loteOpts = [{value:'', label:'Finca general'}, ...S.cache.lotes.map(l=>({value:l.id, label:`${l.codigo} · ${l.cultivo}`}))];
