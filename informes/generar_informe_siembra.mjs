@@ -53,7 +53,8 @@ function agrupar(lista) {
     concepto: m.filas.length > 1 ? `Factura ${m.factura} · ${m.proveedor}` : (CFG.semillas_concepto[m.filas[0].lote_id] && m.filas[0].categoria === 'Semilla' ? CFG.semillas_concepto[m.filas[0].lote_id] : m.filas[0].concepto) }))
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
-const semillas = agrupar(compras.filter(esSemillaTomate));
+const SOLO_FACT = !!CFG.solo_con_factura;
+const semillas = agrupar(compras.filter(esSemillaTomate)).filter(m => !SOLO_FACT || m.soportes.length);
 const insumos = agrupar(compras.filter(c => !esSemillaTomate(c) && ['Agroquímicos', 'Nutrición', 'Insumos Consumibles'].includes(c.categoria) && c.numero_factura));
 /* Mano de obra: los jornales de los cultivos. Un gasto de cuenta «jornales» que repite un jornal (mismo día y valor) no se cuenta dos veces */
 const jorn = [
@@ -65,6 +66,7 @@ const jorn = [
 const envios = compras.filter(c => c.categoria === 'Por verificar' && /Agrario/.test(c.concepto)).map(c => ({ fecha: c.fecha_compra, proveedor: 'Andrés Felipe Escobar',
   concepto: `Envío desde la cuenta del crédito · concepto en el banco: «${(c.concepto.match(/concepto: ([^)]*)/) || [, 'sin concepto'])[1]}»`, valor: num(c.valor_total), filas: [c], ids: [c.id], soportes: sopDe([c.id]) }));
 const suma = l => l.reduce((a, m) => a + m.valor, 0);
+if (SOLO_FACT) { jorn.length = 0; envios.length = 0; }
 const tS = suma(semillas), tI = suma(insumos), tJ = suma(jorn), tE = suma(envios), total = tS + tI + tJ + tE;
 const { monto, desembolsado } = CFG.credito, descuento = monto - desembolsado;
 
@@ -122,9 +124,9 @@ ${portada({ esc, lugar: CFG.finca, titulo: CFG.titulo, subtitulo: CFG.subtitulo,
   <tr class="tot"><td>Desembolsado a la cuenta (${fecha(CFG.credito.fecha_desembolso)})</td><td class="n">${plata(desembolsado)}</td></tr>
   <tr><td>Semillas y plántulas de tomate</td><td class="n">${plata(tS)}</td></tr>
   <tr><td>Insumos agrícolas comprados con factura</td><td class="n">${plata(tI)}</td></tr>
-  <tr><td>Mano de obra (jornales de los cultivos)</td><td class="n">${plata(tJ)}</td></tr>
-  <tr><td>Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte</td><td class="n">${plata(tE)}</td></tr>
-  <tr class="tot"><td>Total invertido en la siembra</td><td class="n">${plata(total)}</td></tr>
+  ${tJ ? `<tr><td>Mano de obra (jornales de los cultivos)</td><td class="n">${plata(tJ)}</td></tr>` : ''}
+  ${tE ? `<tr><td>Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte</td><td class="n">${plata(tE)}</td></tr>` : ''}
+  <tr class="tot"><td>Total invertido en la siembra${SOLO_FACT ? ' (con factura electrónica)' : ''}</td><td class="n">${plata(total)}</td></tr>
 </table>
 <div class="destacado">Se invirtió el <b>100 % del dinero desembolsado</b>${total > desembolsado ? ` y además <b>${plata(total - desembolsado)}</b> de recursos propios` : ''}. ${plata(suma([...semillas, ...insumos, ...envios].filter(m => m.anexos.length)))} están respaldados con factura electrónica o aviso del banco en los anexos.</div>
 <div class="destacado"><b>Estado del crédito según el banco (${fecha(CFG.estado_credito.fecha)}):</b> ${esc(CFG.estado_credito.texto)} <span class="sub">Fuente: ${esc(CFG.estado_credito.fuente)}.</span></div>
@@ -134,8 +136,8 @@ ${CFG.descripcion.map(p => `<p>${esc(p)}</p>`).join('')}
 
 ${tabla('3. Semillas y plántulas de tomate', semillas, 1, tS)}
 ${tabla('4. Insumos agrícolas comprados con factura', insumos, semillas.length + 1, tI, 'Fertilizantes, fungicidas, insecticidas y consumibles comprados desde el desembolso para los cultivos de la finca.')}
-${tabla('5. Mano de obra (jornales de los cultivos)', jorn, semillas.length + insumos.length + 1, tJ, 'Jornales pagados en efectivo en la finca, anotados día a día con la labor y el lote.')}
-${tabla('6. Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte', envios, semillas.length + insumos.length + jorn.length + 1, tE, 'Transferencias desde la cuenta Banco Agrario *6101 (donde se desembolsó el crédito) a Andrés Felipe Escobar, encargado de la finca, para pagar en efectivo trabajadores, estacas, alambre y transportes.')}
+${!jorn.length ? '' : tabla('5. Mano de obra (jornales de los cultivos)', jorn, semillas.length + insumos.length + 1, tJ, 'Jornales pagados en efectivo en la finca, anotados día a día con la labor y el lote.')}
+${!envios.length ? '' : tabla('6. Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte', envios, semillas.length + insumos.length + jorn.length + 1, tE, 'Transferencias desde la cuenta Banco Agrario *6101 (donde se desembolsó el crédito) a Andrés Felipe Escobar, encargado de la finca, para pagar en efectivo trabajadores, estacas, alambre y transportes.')}
 
 <div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="indice">${cgI}<tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>${indice.slice(0, 5).join('')}</table></div>
 ${indice.length > 5 ? `<table class="indice" style="margin-top:-1px">${cgI}${indice.slice(5).join('')}</table>` : ''}
