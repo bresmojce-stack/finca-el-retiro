@@ -16,6 +16,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { armarAnexos } from './anexos.mjs';
+import { portada, cssPortada } from './portada.mjs';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const hoy = new Date().toISOString().slice(0, 10);
@@ -112,10 +113,15 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}
 .gastos{font-size:8.6pt;table-layout:fixed}.gastos td,.gastos th{padding:4px 5px;overflow-wrap:break-word}.gastos tr.mov td{background:#FAFCF6;vertical-align:middle}.gastos td.n{overflow-wrap:normal}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px}
 .falta{color:#B07010;font-style:italic}.indice{font-size:8.3pt}.pie{font-size:8pt;color:#777;margin-top:16px}
-</style></head><body>
-<div style="font-size:11pt;color:#5a6a4a">Finca El Retiro · Pradera, Valle del Cauca</div>
-<h1>${TITULO}</h1>
-<div style="margin:4px 0 14px">Brian Roberto Escobar Morales · C.C. 1.113.524.335 · ${movs.length ? `del ${fechaLarga(movs[0].fecha)} al ${fechaLarga(movs[movs.length - 1].fecha)}` : ''} · informe del ${fechaLarga(hoy)}</div>
+</style>${cssPortada}</head><body>
+${portada({ esc, lugar: 'Finca El Retiro · Pradera, Valle del Cauca', titulo: SOLO_COMPRAS ? 'Informe de compras' : 'Informe de gastos',
+  subtitulo: SOLO_COMPRAS ? 'Compras para la finca y sus cultivos' : 'Toda la plata que ha salido de la finca y sus cultivos', foto: FOTO,
+  cifras: [[SOLO_COMPRAS ? 'Total comprado' : 'Total gastado', plata(total)], ['Con soporte', plata(conSop)], ['Sin soporte', plata(total - conSop)]],
+  datos: [['Titular', '<b>Brian Roberto Escobar Morales</b> · C.C. 1.113.524.335'], ['Finca', 'El Retiro · Pradera, Valle del Cauca'],
+    ['Período', movs.length ? `del ${fechaLarga(movs[0].fecha)} al ${fechaLarga(movs[movs.length - 1].fecha)}` : '—'],
+    ['Gastos registrados', `${movs.length} (las facturas con varios productos cuentan como uno) · ${movs.filter(m => m.anexos.length).length} con soporte`],
+    ['Alcance', `No incluye el préstamo del invernadero${pr ? ` (${esc(pr.nombre)})` : ''}, que tiene su propio informe`]],
+  pie: `Informe del ${fechaLarga(hoy)} · ${anexos.length} soportes documentales en los anexos` })}
 
 <h2>1. Resumen</h2>
 <table class="resumen">
@@ -143,14 +149,18 @@ ${SOLO_COMPRAS ? '' : '<div class="pie">«Por verificar» son transferencias a A
 ${filas}
 <tr><th colspan="5">Total</th><th class="n">${plata(total)}</th><th></th></tr></table>
 
-${anexos.length ? `<h2>Índice de anexos</h2><table class="indice"><colgroup><col style="width:8%"><col style="width:52%"><col style="width:40%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
-${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.s.descripcion || a.s.nombre)}</td><td>${fecha(a.mov.fecha)} · ${esc(a.mov.proveedor.split(' · ')[0])} · ${plata(a.mov.valor)}</td></tr>`).join('')}</table>
+${anexos.length ? `<div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="indice"><colgroup><col style="width:8%"><col style="width:52%"><col style="width:40%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.slice(0, 5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.s.descripcion || a.s.nombre)}</td><td>${fecha(a.mov.fecha)} · ${esc(a.mov.proveedor.split(' · ')[0])} · ${plata(a.mov.valor)}</td></tr>`).join('')}</table></div>${anexos.length > 5 ? `<table class="indice" style="margin-top:-1px"><colgroup><col style="width:8%"><col style="width:52%"><col style="width:40%"></colgroup>${anexos.slice(5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.s.descripcion || a.s.nombre)}</td><td>${fecha(a.mov.fecha)} · ${esc(a.mov.proveedor.split(' · ')[0])} · ${plata(a.mov.valor)}</td></tr>`).join('')}</table>` : ''}
 <div class="pie">Los anexos van a continuación, en orden de número.</div>` : ''}
 <div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
 </body></html>`; };
 
 /* ── PDF: informe y anexos en un solo documento; los anexos llenan cada hoja (ver informes/anexos.mjs) ── */
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'finca-'));
+/* Misma foto de portada que el informe del préstamo */
+const CFG_P = JSON.parse(fs.readFileSync(path.join(AQUI, 'prestamo_invernadero.json'), 'utf8'));
+let FOTO = '';
+if (CFG_P.foto_portada) { const r = await fetch(CFG_P.foto_portada).catch(() => null); if (r && r.ok) FOTO = `data:image/jpeg;base64,${Buffer.from(await r.arrayBuffer()).toString('base64')}`; }
 const AX = await armarAnexos(anexos, { tmp, esc });
 anexos.sort((x, y) => x.n - y.n);
 const html = construir().replace('</body></html>', `${AX.css}${AX.html}</body></html>`);

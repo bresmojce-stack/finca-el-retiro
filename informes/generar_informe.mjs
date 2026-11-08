@@ -14,6 +14,7 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { armarAnexos } from './anexos.mjs';
+import { portada, cssPortada } from './portada.mjs';
 import { fileURLToPath } from 'url';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -79,7 +80,7 @@ const filas = (lista, desde) => lista.map((m, i) => `
   ${m.items.length > 1 || (m.items.length === 1 && m.items[0].c > 1) ? `<tr class="det"><td></td><td colspan="6"><table class="items"><colgroup><col style="width:9%"><col><col style="width:20%"><col style="width:17%"></colgroup>${m.items.map(x => `<tr><td class="n">${num(x.c).toLocaleString('es-CO')}</td><td>${esc(x.d)}</td><td class="n">${num(x.c) > 1 ? plata(num(x.v) / num(x.c)) + ' c/u' : ''}</td><td class="n">${plata(num(x.v))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
 
 const hoy = new Date().toISOString().slice(0, 10);
-const fotosObra = (CFG.fotos_obra || []).filter(f => f.archivo);
+const fotosObra = (CFG.fotos_obra || []).filter(f => f.archivo), fotosSismo = (CFG.fotos_sismo || []).filter(f => f.archivo);
 /* Achica una imagen a JPEG para que el PDF no pese tanto (usa Python + Pillow si está; si no, deja la original) */
 function achicar(buf, max = 1400) {
   try {
@@ -91,7 +92,7 @@ function achicar(buf, max = 1400) {
 }
 /* Las fotos se incrustan en el PDF (el navegador del generador no siempre tiene acceso directo a la red) */
 const _fotos = {};
-for (const a of [CFG.foto_portada, ...fotosObra.map(f => f.archivo)].filter(Boolean)) {
+for (const a of [CFG.foto_portada, ...fotosObra.map(f => f.archivo), ...fotosSismo.map(f => f.archivo)].filter(Boolean)) {
   if (_fotos[a]) continue;
   const buf = /^https?:/.test(a) ? Buffer.from(await (await fetch(a)).arrayBuffer()) : fs.readFileSync(path.resolve(AQUI, a));
   const ch = achicar(buf, 1600);
@@ -114,24 +115,17 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}.nw{wh
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8.3pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px;vertical-align:top}
 .falta{color:#B07010;font-style:italic}.indice{font-size:8pt}.indice td,.indice th{padding:2px 5px}.indice td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fotos{display:flex;flex-wrap:wrap;justify-content:space-between;row-gap:12px}.fotos figure{margin:0;width:49%;break-inside:avoid;page-break-inside:avoid}.fotos img{width:100%;height:61mm;object-fit:cover;border:1px solid #ccc;border-radius:3px}.fotos figcaption{font-size:8.5pt;color:#444;margin-top:3px}
+.fotos3 figure{width:32%}.fotos3 img{height:52mm}.h3{font-size:11pt;color:#2A4F08;margin:14px 0 6px}
 .firma{margin-top:60px;width:70mm;border-top:1px solid #111;padding-top:5px}
 .pie{font-size:8pt;color:#777;margin-top:16px}
-</style></head><body>
+</style>${cssPortada}</head><body>
 
-<section class="portada">
-  <div style="font-size:11pt;color:#5a6a4a">${esc(CFG.finca)}</div>
-  ${CFG.foto_portada ? `<img src="${esc(fotoSrc(CFG.foto_portada))}" style="width:100%;height:95mm;object-fit:cover;border-radius:4px;margin:10px 0 18px">` : ''}
-  <h1>${esc(CFG.titulo)}</h1>
-  <div class="sub1">${esc(CFG.subtitulo)}</div>
-  <table>
-    <tr><td>Titular</td><td><b>${esc(CFG.titular.nombre)}</b> · C.C. ${esc(CFG.titular.cedula)}</td></tr>
-    <tr><td>Entidad</td><td>${esc(CFG.credito.oficina)}</td></tr>
-    <tr><td>Crédito</td><td>${esc(CFG.credito.numero)} · ${esc(CFG.credito.linea)}</td></tr>
-    <tr><td>Condiciones</td><td>${esc(CFG.credito.plazo)} · ${esc(CFG.credito.tasa)}</td></tr>
-    <tr><td>Desembolso</td><td>${pr.fecha_desembolso ? fechaLarga(pr.fecha_desembolso) : '—'}</td></tr>
-    ${CFG.mostrar_fecha_informe ? `<tr><td>Fecha del informe</td><td>${fechaLarga(hoy)}</td></tr>` : ''}
-  </table>
-</section>
+${portada({ esc, lugar: CFG.finca, titulo: CFG.titulo, subtitulo: CFG.subtitulo, foto: CFG.foto_portada ? fotoSrc(CFG.foto_portada) : '',
+  cifras: [['Desembolsado', plata(desembolsado)], ['Total invertido', plata(total)], ['Estado del crédito', CFG.estado_credito ? 'Al día' : '—']],
+  datos: [['Titular', `<b>${esc(CFG.titular.nombre)}</b> · C.C. ${esc(CFG.titular.cedula)}`], ['Entidad', esc(CFG.credito.oficina)],
+    ['Crédito N°', `<b>${esc(CFG.credito.numero)}</b> · ${esc(CFG.credito.linea)}`], ['Condiciones', `${esc(CFG.credito.plazo)} · ${esc(CFG.credito.tasa)}`],
+    ['Desembolso', pr.fecha_desembolso ? fechaLarga(pr.fecha_desembolso) : '—'], ['Obra', 'Invernadero de 24 × 70 m (1.680 m²) en guadua, con plástico Agroclear y riego por goteo']],
+  pie: `Informe del ${fechaLarga(hoy)} · ${movs.length} gastos con ${movs.filter(m => m.soportes.length).length} soportes documentales en los anexos` })}
 
 <h2>1. Resumen del préstamo</h2>
 <table class="resumen">
@@ -154,6 +148,8 @@ ${cuotas.length ? `<h3 style="font-size:11pt;color:#2A4F08;margin:16px 0 6px">Pa
 ${cuotas.map((c, i) => `<tr><td>Cuota ${i + 1}${CFG.credito.cuotas ? ' de ' + CFG.credito.cuotas : ''}</td><td>${fechaLarga(c.fecha_compra)}</td><td class="n">${plata(num(c.valor_total))}</td></tr>`).join('')}
 ${CFG.credito.cuotas ? `<tr class="tot"><td colspan="2">Cuotas pagadas: ${cuotas.length} · faltan ${CFG.credito.cuotas - cuotas.length}</td><td class="n">${plata(suma(cuotas.map(c => ({ valor: num(c.valor_total) }))))}</td></tr>` : ''}</table>` : ''}
 
+${CFG.estado_credito ? `<div class="destacado"><b>Estado del crédito según el banco (${fecha(CFG.estado_credito.fecha)}):</b> ${esc(CFG.estado_credito.texto)} <span class="sub">Fuente: ${esc(CFG.estado_credito.fuente)}.</span></div>` : ''}
+
 <h2>2. Descripción de la obra</h2>
 ${(CFG.descripcion_obra || []).map(p => `<p>${esc(p)}</p>`).join('')}
 ${CFG.nota_reparacion ? `<div class="destacado">${esc(CFG.nota_reparacion)}</div>` : ''}
@@ -170,9 +166,11 @@ ${filas(cultivo, obra.length + 1)}
 
 ${fotosObra.length ? `<h2>${cultivo.length ? 5 : 4}. Registro fotográfico de la obra</h2>
 <div class="fotos">${fotosObra.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
+${fotosSismo.length ? `<h3 class="h3">${esc(CFG.titulo_fotos_sismo || 'Daños del sismo')}</h3>
+<div class="fotos fotos3">${fotosSismo.map(f => `<figure><img src="${esc(fotoSrc(f.archivo))}"><figcaption>${esc(f.titulo)}</figcaption></figure>`).join('')}</div>` : ''}
 
-${anexos.length ? `<h2>Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
-${anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}
+${anexos.length ? `<div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="gastos indice"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup><tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>
+${anexos.slice(0, 5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table></div>${anexos.length > 5 ? `<table class="gastos indice" style="margin-top:-1px"><colgroup><col style="width:7%"><col style="width:45%"><col style="width:48%"></colgroup>${anexos.slice(5).map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.descripcion || a.nombre)}</td><td>${a.mov ? `${fecha(a.mov.fecha)} · ${esc((a.mov.concepto.length > 58 ? a.mov.concepto.slice(0, 56) + '…' : a.mov.concepto))}` : 'Documentos del préstamo'}</td></tr>`).join('')}</table>` : ''}` : ''}
 
 ${CFG.firma ? `<div class="firma" style="margin-top:40px"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>` : ''}
 <div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>

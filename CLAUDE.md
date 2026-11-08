@@ -27,7 +27,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 - El MCP `execute_sql` suele colgarse en borrados: usar la API REST (`DELETE /rest/v1/<tabla>?id=in.(...)`). Antes de borrar, guardar respaldo JSON de las filas.
 
 ## Reglas de cuentas (muy importante)
-- **El préstamo del invernadero va aparte de la finca.** Préstamo = proyecto `20bf624c-f465-4156-afbc-f4b157067aaa` (Banco Agrario, crédito ****1371, desembolso 19/05/2026 de $42.988.194). Solo lleva lo pagado para construir el invernadero y poner en marcha su primer cultivo (turba, bandejas).
+- **El préstamo del invernadero va aparte de la finca.** Préstamo = proyecto `20bf624c-f465-4156-afbc-f4b157067aaa` (Banco Agrario, crédito N° 725069400241371, FINAGRO inversión ordinaria; desembolso 19/05/2026 de $42.988.194). Solo lleva lo pagado para construir el invernadero y poner en marcha su primer cultivo (turba, bandejas).
 - **Finca y cultivos** = `proyecto_id` nulo: insumos de bodega, jornales del campo, semillas (Tronus, Lesvos), fletes de cosecha.
 - La bodega y sus consumos son siempre de la finca; nunca entran al préstamo.
 - Toda plata enviada al Nequi 318 540 5823 (Andrés Felipe Escobar, hermano) es gasto de la finca: registrar como categoría `Por verificar`, concepto "Gasto por verificar · transferencia a Andrés Escobar (banco · concepto)". No duplicar si ya hay un gasto registrado por esa misma transferencia.
@@ -46,6 +46,7 @@ Se habla siempre en español, claro y sin tecnicismos.
 ## Informe del préstamo (PDF tamaño carta)
 - Generar: `NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe.mjs`
 - Textos editables en `informes/prestamo_invernadero.json` (crédito, descripción de la obra, fotos, sección de cultivo; `incluir_consumos_de_bodega` debe quedar en `false`).
+- Portada común de los dos informes: `informes/portada.mjs` (misma foto: `foto_portada` de `prestamo_invernadero.json`). El estado del crédito que certifica el banco va en `estado_credito` del JSON.
 - Revisar el PDF por páginas (pdftoppm) antes de entregarlo: nada debe salirse de su casilla ni quedar hojas en blanco o casi vacías.
 - Los anexos de los dos informes se acomodan con `informes/anexos.mjs`: llena cada hoja (comprobantes y tirillas lado a lado, facturas reducidas hasta 72 % para que quepan dos), quita los blancos internos y numera los anexos en el orden impreso.
 
@@ -57,6 +58,6 @@ Se habla siempre en español, claro y sin tecnicismos.
 
 ## Pendientes conocidos
 - Factura de la motobomba de Homecenter ($2.188.400, 24/05, pagada con tarjeta Falabella): hay que pedirla en Homecenter Palmira Unicentro.
-- Número completo del crédito (solo se conoce ****1371).
+- Hay un segundo crédito Banco Agrario N° 725069400241061 (FINAGRO «Siembra», capital $13.500.000) que no está en la app: preguntar a Brian si se lleva aparte como el del invernadero.
 - Extractos de Nequi de septiembre y octubre para revisar transferencias a Andrés.
 - Verificar con Andrés en qué se gastó cada transferencia "Por verificar".
