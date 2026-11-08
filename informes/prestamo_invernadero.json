@@ -9,7 +9,7 @@
   },
   "finca": "Finca El Retiro · Pradera, Valle del Cauca",
   "credito": {
-    "numero": "****1371",
+    "numero": "725069400241371",
     "linea": "Inversión ordinaria FINAGRO",
     "oficina": "Banco Agrario de Colombia · Oficina Palmira",
     "plazo": "60 meses · 10 cuotas semestrales · 360 días de gracia a capital",
@@ -22,7 +22,7 @@
     "Sistema de riego por goteo con cinta Pathfinder, tubería PVC de presión, motobomba e inyector Venturi para fertirriego.",
     "Construcción contratada a $6.500 por m² con Jesús Alveiro Mera Pechene, más mano de obra contratada en El Retiro."
   ],
-  "nota_reparacion": "En septiembre de 2026, después del terremoto y los vendavales, la estructura sufrió daños y se compró guadua adicional para repararla.",
+  "nota_reparacion": "El sismo del 10 de agosto de 2026 (declarado situación de desastre nacional) quebró más de 40 guaduas de la estructura y arrancó la cubierta de una nave completa. Para repararla se compró guadua y plástico adicionales (gastos de septiembre y octubre de este informe). El 28/09/2026 se radicó ante el banco la petición N° 2026080633; el banco respondió el 19/10/2026 (ver anexos).",
   "cultivo": {
     "_ayuda": "Gastos pagados con el préstamo para poner en marcha el primer cultivo del invernadero (no los insumos de la bodega de la finca, que son cuentas aparte).",
     "titulo": "Puesta en marcha del primer cultivo",
@@ -97,5 +97,34 @@
   "firma": true,
   "foto_portada": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/obra_13.jpg",
   "_ayuda_fotos": "Las fotos de la obra están en la nube (bucket soportes/…/obra/). Se muestran en este orden (de la más antigua a la más reciente). Para agregar una, súbela y añade su URL aquí.",
-  "mostrar_fecha_informe": false
+  "mostrar_fecha_informe": false,
+  "estado_credito": {
+    "_ayuda": "Lo que certificó el banco por escrito (respuesta al caso 2026080633). Actualizar cuando llegue un documento más reciente.",
+    "fecha": "2026-10-19",
+    "fuente": "Banco Agrario de Colombia · respuesta al caso N° 2026080633 (19/10/2026)",
+    "texto": "La obligación 7250****1371 registra cero (0) días de mora; capital $46.752.500 e intereses corrientes $3.483.222 a esa fecha. El mismo 19/10/2026 se pagó la cuota 1 por $4.256.862 (transacción 5069024)."
+  },
+  "titulo_fotos_sismo": "Daños causados por el sismo del 10 de agosto de 2026",
+  "fotos_sismo": [
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_1.jpg",
+      "titulo": "Guaduas de la estructura quebradas por el sismo."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_2.jpg",
+      "titulo": "Base de una columna de guadua desprendida."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_3.jpg",
+      "titulo": "Nave con la cubierta de plástico arrancada."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_4.jpg",
+      "titulo": "Estructura y plástico caídos dentro del invernadero."
+    },
+    {
+      "archivo": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/obra/sismo_5.jpg",
+      "titulo": "Vista general de la nave afectada."
+    }
+  ]
 }
