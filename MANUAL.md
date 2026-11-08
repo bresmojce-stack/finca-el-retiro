@@ -21,4 +21,4 @@ sobre cualquier otra guía si chocan.
 Contadores (actualizar al publicar):
 - Mini Civil: última inspección — ninguna (desde v60); último ponytail-audit — v50.
 - TopoVías: última inspección — ninguna (desde v94); último ponytail-audit — v90.
-- Finca El Retiro: última inspección — v13.0 (06/11/2026); último ponytail-audit — ninguno registrado.
+- Finca El Retiro: última inspección — v13.0 (06/11/2026); último ponytail-audit — v13.1 (08/11/2026).

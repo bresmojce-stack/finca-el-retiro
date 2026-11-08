@@ -7,7 +7,7 @@
  *  - Si la red falla y es una navegación, devuelve el index.html cacheado
  */
 
-const CACHE_VERSION = 'finca-retiro-v13-1';
+const CACHE_VERSION = 'finca-retiro-v13-2';
 // Las librerías de internet van en una caja aparte que no se borra al actualizar, para que la app abra sin señal
 const CDN_CACHE = 'finca-retiro-cdn-v1';
 const CDN_PRECACHE = [
