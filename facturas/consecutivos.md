@@ -107,8 +107,10 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 En la app hay también tirillas de Homecenter que no llegaron al correo: 3109100458745 (09/06) y 3203 0100436529 (29/07).
 Pendiente: factura de la motobomba ($2.188.400, 24/05) que no llegó al correo.
 
-## Compras anotadas a mano sin factura (posibles repetidas)
-- Trionex 30/08 $52.000 e Incipio 21/09 $85.800: no corresponden a ninguna factura del correo. Si Andrés confirma que eran las de FEO7607 o 3RZ44558, borrarlas.
+## Compras anotadas a mano sin factura
+Regla de Brian (08/11/2026): si una compra anotada a mano tiene el mismo precio que una factura de ese día, un día antes o un día después, es la misma compra (se deja la de la factura). Si no coincide con ninguna factura, es una compra aparte (en efectivo u otro medio) y se deja.
+- Revisión del 08/11: solo «Inciplo (100 CC)» del 22/06 ($91.000) era la misma de la factura FEO6941; se borró (respaldo en el scratchpad).
+- Trionex 30/08 ($52.000) e Incipio 21/09 ($85.800) no coinciden con ninguna factura: son compras aparte y se dejan.
 
 ## Personales (no van en la app)
 Éxito, Alkosto/Ktronix (Colombiana de Comercio), Claro, Celsia, Celsia Internet, Seguros Mundial, Comfandi.
