@@ -67,11 +67,15 @@ const movs = [...grupos.values()].map(g => {
   return { fecha: g.map(x => x.fecha_compra).sort()[0], proveedor: c.proveedor || 'No especificado', factura: c.numero_factura,
     concepto: g.length > 1 ? `Factura con ${g.length} productos` : c.concepto, productos: g.length > 1 ? g : [],
     cuenta: cuentas.join(', '), cuentas: g.map(x => [cuenta(x.categoria), num(x.valor_total)]), valor: g.reduce((a, x) => a + num(x.valor_total), 0),
-    soportes: sopDe('compra_id', g.map(x => x.id)) };
+    soportes: sopDe('compra_id', g.map(x => x.id)), ids: g.map(x => x.id) };
 });
 for (const j of jornales) movs.push({ fecha: j.fecha, proveedor: j.trabajador, concepto: `Jornal: ${j.trabajador} · ${num(j.dias)} día(s)${j.nota ? ' · ' + j.nota : ''}`,
-  productos: [], cuenta: cuenta('jornales'), cuentas: [[cuenta('jornales'), num(j.valor_total)]], valor: num(j.valor_total), soportes: sopDe('jornal_id', [j.id]) });
+  productos: [], cuenta: cuenta('jornales'), cuentas: [[cuenta('jornales'), num(j.valor_total)]], valor: num(j.valor_total), soportes: sopDe('jornal_id', [j.id]), ids: [j.id] });
 movs.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || a.proveedor.localeCompare(b.proveedor));
+
+/* Gastos presentados al banco en el informe del crédito de la siembra (lo escribe generar_informe_siembra.mjs) */
+const SIEMBRA = (() => { try { const x = JSON.parse(fs.readFileSync(path.join(AQUI, 'siembra_presentado.json'), 'utf8')); return new Set([...x.compras, ...x.jornales]); } catch { return new Set(); } })();
+movs.forEach(m => { m.banco = m.ids.some(id => SIEMBRA.has(id)); });
 
 /* Anexos: un número por archivo (varios productos de una factura comparten el mismo PDF) */
 const anexos = [], porRuta = new Map();
@@ -97,7 +101,7 @@ for (const m of movs) {
 const filaTot = ([k, x], etiqueta) => `<tr><td>${esc(etiqueta)}</td><td class="n">${plata(x.v)}</td><td class="n">${plata(x.s)}</td><td class="n ${x.v - x.s > 0 ? 'falta' : ''}">${x.v - x.s > 0 ? plata(x.v - x.s) : '—'}</td></tr>`;
 
 const construir = () => { const filas = movs.map((m, i) => `
-  <tr class="mov"><td class="c">${i + 1}</td><td class="c">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
+  <tr class="mov"><td class="c">${i + 1}</td><td class="c">${fecha(m.fecha)}</td><td>${esc(m.proveedor.split(' · ')[0])}</td><td><b>${esc(m.concepto)}</b>${m.factura ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}${m.banco ? '<div class="banco">Presentado al banco · crédito de la siembra</div>' : ''}</td>
     <td>${esc(m.cuenta)}</td><td class="n"><b>${plata(m.valor)}</b></td><td class="c">${m.anexos.length ? m.anexos.map(a => a.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>'}</td></tr>
   ${m.productos.length ? `<tr class="det"><td></td><td colspan="6"><table class="items"><colgroup><col><col style="width:22%"></colgroup>${m.productos.map(x => `<tr><td>${esc(x.concepto)}</td><td class="n">${plata(num(x.valor_total))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
 
@@ -112,7 +116,7 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}
 .destacado{margin:10px 0;padding:10px 12px;border-left:4px solid #639922;background:#F4FAE6}
 .gastos{font-size:8.6pt;table-layout:fixed}.gastos td,.gastos th{padding:4px 5px;overflow-wrap:break-word}.gastos tr.mov td{background:#FAFCF6;vertical-align:middle}.gastos td.n{overflow-wrap:normal}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px}
-.falta{color:#B07010;font-style:italic}.indice{font-size:8.3pt}.pie{font-size:8pt;color:#777;margin-top:16px}
+.falta{color:#B07010;font-style:italic}.banco{font-size:7.5pt;color:#2A4F08;font-weight:bold}.indice{font-size:8.3pt}.pie{font-size:8pt;color:#777;margin-top:16px}
 </style>${cssPortada}</head><body>
 ${portada({ esc, lugar: 'Finca El Retiro · Pradera, Valle del Cauca', titulo: SOLO_COMPRAS ? 'Informe de compras' : 'Informe de gastos',
   subtitulo: SOLO_COMPRAS ? 'Compras para la finca y sus cultivos' : 'Toda la plata que ha salido de la finca y sus cultivos', foto: FOTO,
@@ -128,6 +132,7 @@ ${portada({ esc, lugar: 'Finca El Retiro · Pradera, Valle del Cauca', titulo: S
   <tr class="tot"><td>${SOLO_COMPRAS ? 'Total comprado' : 'Total de plata que ha salido'}</td><td class="n">${plata(total)}</td></tr>
   <tr><td>Con soporte (factura o comprobante en los anexos)</td><td class="n">${plata(conSop)}</td></tr>
   <tr><td>Sin soporte</td><td class="n">${plata(total - conSop)}</td></tr>
+  ${SIEMBRA.size ? `<tr><td>Presentado al Banco Agrario en el informe del crédito de la siembra</td><td class="n">${plata(suma(movs.filter(m => m.banco)))}</td></tr>` : ''}
 </table>
 <div class="destacado">${movs.length} gastos (las facturas con varios productos cuentan como uno) · ${movs.filter(m => m.anexos.length).length} con soporte · ${anexos.length} anexos.
   No incluye el préstamo del invernadero${pr ? ` (${esc(pr.nombre)})` : ''}, que tiene su propio informe${SOLO_COMPRAS ? '. Tampoco incluye jornales, transferencias por verificar, cuotas del crédito ni gastos de Lauro' : '; sí incluye el pago de sus cuotas'}.</div>

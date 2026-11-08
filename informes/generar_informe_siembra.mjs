@@ -1,7 +1,9 @@
 /*
  * Informe del crédito de la siembra (Banco Agrario N° 725069400241061) en PDF carta.
- * Muestra: semillas y plántulas del tomate, insumos agrícolas comprados con factura desde el desembolso,
- * y los jornales del lote de tomate; con las facturas como anexos. Misma portada que los otros informes.
+ * Muestra lo que cubre el dinero desembolsado: los jornales de los cultivos (pagados en efectivo), las semillas
+ * y plántulas de tomate con factura, y los insumos con factura en orden de fecha hasta completar lo desembolsado.
+ * Lo que la finca pagó de más con recursos propios queda en el informe de gastos de la finca.
+ * Escribe informes/siembra_presentado.json con los gastos presentados (el informe de la finca los marca).
  * Uso: NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node informes/generar_informe_siembra.mjs
  */
 import fs from 'fs';
@@ -53,24 +55,32 @@ function agrupar(lista) {
     concepto: m.filas.length > 1 ? `Factura ${m.factura} · ${m.proveedor}` : (CFG.semillas_concepto[m.filas[0].lote_id] && m.filas[0].categoria === 'Semilla' ? CFG.semillas_concepto[m.filas[0].lote_id] : m.filas[0].concepto) }))
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
-const semillas = agrupar(compras.filter(esSemillaTomate));
-const insumos = agrupar(compras.filter(c => !esSemillaTomate(c) && ['Agroquímicos', 'Nutrición', 'Insumos Consumibles'].includes(c.categoria) && c.numero_factura));
+const semillasTodas = agrupar(compras.filter(esSemillaTomate)), semillas = semillasTodas.filter(m => m.soportes.length);
+/* Facturas con insumos agrícolas: entran completas (con todos sus productos), igual que el PDF del anexo */
+const llaveF = c => `${c.numero_factura}|${c.proveedor || ''}`;
+const conInsumos = new Set(compras.filter(c => !esSemillaTomate(c) && ['Agroquímicos', 'Nutrición', 'Insumos Consumibles'].includes(c.categoria) && c.numero_factura).map(llaveF));
+const insumosTodos = agrupar(compras.filter(c => !esSemillaTomate(c) && c.numero_factura && conInsumos.has(llaveF(c)))).filter(m => m.soportes.length);
 /* Mano de obra: los jornales de los cultivos. Un gasto de cuenta «jornales» que repite un jornal (mismo día y valor) no se cuenta dos veces */
 const jorn = [
-  ...jornales.map(j => ({ fecha: j.fecha, proveedor: j.trabajador, concepto: `Jornal ${num(j.dias)} día(s) · ${loteDe(j.lote_id)}${j.nota ? ' · ' + j.nota : ''}`, valor: num(j.valor_total), filas: [], soportes: [] })),
+  ...jornales.map(j => ({ id: j.id, fecha: j.fecha, proveedor: j.trabajador, concepto: `Jornal ${num(j.dias)} día(s) · ${loteDe(j.lote_id)}${j.nota ? ' · ' + j.nota : ''}`, valor: num(j.valor_total), filas: [], soportes: [] })),
   ...compras.filter(c => c.categoria === 'jornales' && !jornales.some(j => j.fecha === c.fecha_compra && Math.abs(num(j.valor_total) - num(c.valor_total)) < 1))
-    .map(c => ({ fecha: c.fecha_compra, proveedor: (c.proveedor || 'Trabajador').split(' · ')[0], concepto: c.concepto, valor: num(c.valor_total), filas: [], soportes: [] }))
+    .map(c => ({ ids: [c.id], fecha: c.fecha_compra, proveedor: (c.proveedor || 'Trabajador').split(' · ')[0], concepto: c.concepto, valor: num(c.valor_total), filas: [], soportes: [] }))
 ].sort((a, b) => a.fecha.localeCompare(b.fecha));
-/* Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte (con el aviso del banco) */
-const envios = compras.filter(c => c.categoria === 'Por verificar' && /Agrario/.test(c.concepto)).map(c => ({ fecha: c.fecha_compra, proveedor: 'Andrés Felipe Escobar',
-  concepto: `Envío desde la cuenta del crédito · concepto en el banco: «${(c.concepto.match(/concepto: ([^)]*)/) || [, 'sin concepto'])[1]}»`, valor: num(c.valor_total), filas: [c], ids: [c.id], soportes: sopDe([c.id]) }));
 const suma = l => l.reduce((a, m) => a + m.valor, 0);
-const tS = suma(semillas), tI = suma(insumos), tJ = suma(jorn), tE = suma(envios), total = tS + tI + tJ + tE;
 const { monto, desembolsado } = CFG.credito, descuento = monto - desembolsado;
+/* Insumos con factura en orden de fecha hasta completar lo desembolsado (la última factura entra completa) */
+const insumos = [];
+for (const m of insumosTodos) { if (suma(jorn) + suma(semillas) + suma(insumos) >= desembolsado) break; insumos.push(m); }
+const tS = suma(semillas), tI = suma(insumos), tJ = suma(jorn), total = tS + tI + tJ;
+/* Lo demás que la finca pagó en estos cultivos desde el desembolso (con recursos propios) */
+const resto = suma(insumosTodos.filter(m => !insumos.includes(m))) + suma(semillasTodas.filter(m => !semillas.includes(m)));
+fs.writeFileSync(path.join(AQUI, 'siembra_presentado.json'), JSON.stringify({
+  _ayuda: 'Gastos presentados al Banco Agrario en el informe del crédito de la siembra. Lo escribe generar_informe_siembra.mjs; el informe de la finca los marca.',
+  generado: hoy, total, compras: [...semillas, ...insumos, ...jorn].flatMap(m => m.ids || []), jornales: jorn.filter(m => m.id).map(m => m.id) }, null, 2) + '\n');
 
 /* Anexos: facturas (una vez por archivo), el desembolso y la constancia del banco */
 const anexos = [], porRuta = new Map();
-for (const m of [...semillas, ...insumos, ...envios]) m.anexos = [...new Set(m.soportes.map(s => {
+for (const m of [...semillas, ...insumos]) m.anexos = [...new Set(m.soportes.map(s => {
   if (!porRuta.has(s.ruta)) { const a = { url: s.url, tipo: s.tipo, titulo: s.descripcion || s.nombre, linea: `${fecha(m.fecha)} · ${m.proveedor} · ${plata(m.valor)}` }; porRuta.set(s.ruta, a); anexos.push(a); }
   return porRuta.get(s.ruta);
 }))];
@@ -89,11 +99,12 @@ const cg = '<colgroup><col style="width:5%"><col style="width:11%"><col style="w
 const cab = '<tr><th class="c">#</th><th class="c">Fecha</th><th>Proveedor</th><th>Concepto</th><th class="n">Valor</th><th class="c">Anexo</th></tr>';
 const filas = (lista, desde) => lista.map((m, i) => `
   <tr class="mov"><td class="c">${desde + i}</td><td class="c">${fecha(m.fecha)}</td><td>${esc(m.proveedor)}</td><td><b>${esc(m.concepto)}</b>${m.factura && m.filas.length < 2 ? `<div class="sub">Factura ${esc(m.factura)}</div>` : ''}</td>
-    <td class="n"><b>${plata(m.valor)}</b></td><td class="c">${m.anexos.length ? m.anexos.map(a => a.n).sort((x, y) => x - y).join(', ') : '<span class="falta">Sin soporte</span>'}</td></tr>
+    <td class="n"><b>${plata(m.valor)}</b></td><td class="c">${m.anexos.length ? m.anexos.map(a => a.n).sort((x, y) => x - y).join(', ') : '<span class="sub">Pago en efectivo</span>'}</td></tr>
   ${m.filas.length > 1 ? `<tr class="det"><td></td><td colspan="5"><table class="items"><colgroup><col><col style="width:20%"></colgroup>${m.filas.map(x => `<tr><td>${esc(x.concepto)}</td><td class="n">${plata(num(x.valor_total))}</td></tr>`).join('')}</table></td></tr>` : ''}`).join('');
 const tabla = (titulo, lista, desde, tot, nota = '') => `<h2>${titulo}</h2>${nota ? `<p class="nota">${nota}</p>` : ''}<table class="gastos">${cg}${cab}${filas(lista, desde)}<tr><th colspan="4">Subtotal</th><th class="n">${plata(tot)}</th><th></th></tr></table>`;
-const indice = anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.titulo)}</td><td>${esc(a.linea)}</td></tr>`);
-const cgI = '<colgroup><col style="width:8%"><col style="width:55%"><col style="width:37%"></colgroup>';
+const corto = l => { const p = String(l || '').split(' · '); return p.length > 2 ? `${p[0]} · ${p.at(-1)}` : p.join(' · '); };
+const indice = anexos.map(a => `<tr><td class="c">${a.n}</td><td>${esc(a.titulo)}</td><td>${esc(corto(a.linea))}</td></tr>`);
+const cgI = '<colgroup><col style="width:7%"><col style="width:70%"><col style="width:23%"></colgroup>';
 
 const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(CFG.titulo)} · crédito de siembra</title><style>
 @page{size:Letter;margin:16mm 14mm 18mm}
@@ -105,11 +116,11 @@ td.n,th.n{text-align:right;white-space:nowrap}td.c,th.c{text-align:center}
 .destacado{margin:10px 0;padding:10px 12px;border-left:4px solid #639922;background:#F4FAE6}
 .gastos{font-size:8.6pt;table-layout:fixed}.gastos td,.gastos th{padding:4px 5px;overflow-wrap:break-word}.gastos tr.mov td{background:#FAFCF6;vertical-align:middle}.gastos td.n{overflow-wrap:normal}.sub{font-size:8pt;color:#5a6a4a}
 tr.det td{border-top:none;padding:0 6px 6px}table.items{font-size:8pt;table-layout:fixed}table.items td{border:none;border-bottom:1px dotted #d6dfcb;padding:2px 5px}
-.falta{color:#B07010;font-style:italic}.indice{font-size:8.3pt}.nota{font-size:9pt;color:#444;margin:0 0 6px}.pie{font-size:8pt;color:#777;margin-top:14px}
+.falta{color:#B07010;font-style:italic}.indice{font-size:7.8pt}.indice td,.indice th{padding:2px 5px}.nota{font-size:9pt;color:#444;margin:0 0 6px}.pie{font-size:8pt;color:#777;margin-top:14px}
 .firma{margin-top:40px;width:70mm;border-top:1px solid #111;padding-top:5px}
 </style>${cssPortada}</head><body>
 ${portada({ esc, lugar: CFG.finca, titulo: CFG.titulo, subtitulo: CFG.subtitulo, foto: FOTO,
-  cifras: [['Desembolsado', plata(desembolsado)], ['Total invertido', plata(total)], ['Estado del crédito', 'Al día']],
+  cifras: [['Desembolsado', plata(desembolsado)], ['Invertido (este informe)', plata(total)], ['Estado del crédito', 'Al día']],
   datos: [['Titular', `<b>${esc(CFG.titular.nombre)}</b> · C.C. ${esc(CFG.titular.cedula)}`], ['Entidad', esc(CFG.credito.oficina)],
     ['Crédito N°', `<b>${esc(CFG.credito.numero)}</b> · ${esc(CFG.credito.linea)}`], ['Desembolso', fechaLarga(CFG.credito.fecha_desembolso)],
     ['Cultivo principal', 'Tomate: Tronus en campo abierto (1.500 plantas) y segunda siembra en el invernadero']],
@@ -120,27 +131,26 @@ ${portada({ esc, lugar: CFG.finca, titulo: CFG.titulo, subtitulo: CFG.subtitulo,
   <tr><td>Monto aprobado</td><td class="n">${plata(monto)}</td></tr>
   <tr><td>Descontado por el banco (seguro y comisiones)</td><td class="n">− ${plata(descuento)}</td></tr>
   <tr class="tot"><td>Desembolsado a la cuenta (${fecha(CFG.credito.fecha_desembolso)})</td><td class="n">${plata(desembolsado)}</td></tr>
-  <tr><td>Semillas y plántulas de tomate</td><td class="n">${plata(tS)}</td></tr>
-  <tr><td>Insumos agrícolas comprados con factura</td><td class="n">${plata(tI)}</td></tr>
-  <tr><td>Mano de obra (jornales de los cultivos)</td><td class="n">${plata(tJ)}</td></tr>
-  <tr><td>Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte</td><td class="n">${plata(tE)}</td></tr>
+  <tr><td>Semillas y plántulas de tomate (con factura)</td><td class="n">${plata(tS)}</td></tr>
+  <tr><td>Insumos agrícolas (con factura, ${fecha(insumos[0]?.fecha || CFG.desde)} a ${fecha(insumos.at(-1)?.fecha || CFG.desde)})</td><td class="n">${plata(tI)}</td></tr>
+  <tr><td>Mano de obra (jornales de los cultivos, pagados en efectivo)</td><td class="n">${plata(tJ)}</td></tr>
   <tr class="tot"><td>Total invertido en la siembra</td><td class="n">${plata(total)}</td></tr>
 </table>
-<div class="destacado">Se invirtió el <b>100 % del dinero desembolsado</b>${total > desembolsado ? ` y además <b>${plata(total - desembolsado)}</b> de recursos propios` : ''}. ${plata(suma([...semillas, ...insumos, ...envios].filter(m => m.anexos.length)))} están respaldados con factura electrónica o aviso del banco en los anexos.</div>
+<div class="destacado">Se invirtió el <b>100 % del dinero desembolsado</b>${total > desembolsado ? ` (${plata(total - desembolsado)} más, puestos con recursos propios)` : ''}. ${plata(tS + tI)} están respaldados con factura electrónica a nombre del titular (anexos) y ${plata(tJ)} son jornales pagados en efectivo, anotados día a día.
+${resto > 0 ? `<br>Además, desde el desembolso la finca pagó con recursos propios otros <b>${plata(resto)}</b> en facturas de insumos y semillas para estos mismos cultivos, que no se incluyen aquí porque superan el valor del crédito.` : ''}</div>
 <div class="destacado"><b>Estado del crédito según el banco (${fecha(CFG.estado_credito.fecha)}):</b> ${esc(CFG.estado_credito.texto)} <span class="sub">Fuente: ${esc(CFG.estado_credito.fuente)}.</span></div>
 
 <h2>2. Destino del crédito</h2>
 ${CFG.descripcion.map(p => `<p>${esc(p)}</p>`).join('')}
 
 ${tabla('3. Semillas y plántulas de tomate', semillas, 1, tS)}
-${tabla('4. Insumos agrícolas comprados con factura', insumos, semillas.length + 1, tI, 'Fertilizantes, fungicidas, insecticidas y consumibles comprados desde el desembolso para los cultivos de la finca.')}
-${tabla('5. Mano de obra (jornales de los cultivos)', jorn, semillas.length + insumos.length + 1, tJ, 'Jornales pagados en efectivo en la finca, anotados día a día con la labor y el lote.')}
-${tabla('6. Envíos desde la cuenta del crédito para mano de obra, estacas, alambre y transporte', envios, semillas.length + insumos.length + jorn.length + 1, tE, 'Transferencias desde la cuenta Banco Agrario *6101 (donde se desembolsó el crédito) a Andrés Felipe Escobar, encargado de la finca, para pagar en efectivo trabajadores, estacas, alambre y transportes.')}
+${tabla('4. Insumos agrícolas comprados con factura', insumos, semillas.length + 1, tI, 'Fertilizantes, fungicidas, insecticidas y consumibles comprados para los cultivos, en orden de fecha desde el desembolso hasta completar el valor desembolsado.')}
+${tabla('5. Mano de obra (jornales de los cultivos)', jorn, semillas.length + insumos.length + 1, tJ, 'Jornales pagados en efectivo a los trabajadores de la finca, anotados día a día con la labor y el lote.')}
 
+<div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
+<div class="firma"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>
 <div style="break-inside:avoid"><h2>Índice de anexos</h2><table class="indice">${cgI}<tr><th>Anexo</th><th>Documento</th><th>Corresponde a</th></tr>${indice.slice(0, 5).join('')}</table></div>
 ${indice.length > 5 ? `<table class="indice" style="margin-top:-1px">${cgI}${indice.slice(5).join('')}</table>` : ''}
-<div class="firma"><b>${esc(CFG.titular.nombre)}</b><br>C.C. ${esc(CFG.titular.cedula)}</div>
-<div class="pie">Valores en pesos colombianos con IVA incluido (valor neto pagado).</div>
 ${AX.css}${AX.html}
 </body></html>`;
 
@@ -151,4 +161,4 @@ fs.mkdirSync(path.dirname(SALIDA), { recursive: true });
 await pag.pdf({ path: SALIDA, format: 'Letter', printBackground: true, displayHeaderFooter: true, headerTemplate: '<span></span>',
   footerTemplate: `<div style="font-size:7pt;color:#888;width:100%;text-align:center;font-family:Arial">${esc(CFG.subtitulo)} · página <span class="pageNumber"></span> de <span class="totalPages"></span></div>` });
 await navegador.close();
-console.log(`Informe listo: ${SALIDA}\nsemillas ${plata(tS)} · insumos ${plata(tI)} · jornales ${plata(tJ)} · envíos ${plata(tE)} · total ${plata(total)} · ${anexos.length} anexos`);
+console.log(`Informe listo: ${SALIDA}\nsemillas ${plata(tS)} · insumos ${plata(tI)} (${insumos.length} de ${insumosTodos.length} facturas) · jornales ${plata(tJ)} · total ${plata(total)} · resto propio ${plata(resto)} · ${anexos.length} anexos`);
