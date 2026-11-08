@@ -1,7 +1,7 @@
 # Memoria de facturas (consecutivos)
 
 Lista de todas las facturas electrónicas que han llegado al correo (bresmojce@gmail.com) desde abril de 2026, y si están en la app.
-**Última revisión del correo: 06/11/2026.** En la próxima revisión, buscar solo lo que llegó después de esa fecha y agregarlo aquí.
+**Última revisión del correo: 08/11/2026.** En la próxima revisión, buscar solo lo que llegó después de esa fecha y agregarlo aquí.
 
 Cómo revisar: en Gmail buscar `after:AAAA/MM/DD (filename:zip OR subject:factura OR subject:FE)`. El asunto trae `NIT;EMPRESA;NÚMERO;01;...`.
 Por cada factura: ver si el número ya está en `compras.numero_factura`, y que la suma de sus filas sea igual al total de la factura.
@@ -33,8 +33,9 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | FEO8370 | 15/10 | 140.000 | OK |
 | FEO8451 | 21/10 | 30.000 | OK |
 | FEO8695 | 06/11 | 282.000 | OK (cargada 06/11) |
+| FEO8720 | 07/11 | 32.000 | OK (cargada 08/11: hilo Kent 750 m y 3.000 m) |
 
-**Último consecutivo: FEO8695**
+**Último consecutivo: FEO8720**
 
 ## Grupo Cenagro S.A.S. (NIT 901029016) — prefijos 3RZ / 2RZ
 | Factura | Fecha | Total | Estado |
