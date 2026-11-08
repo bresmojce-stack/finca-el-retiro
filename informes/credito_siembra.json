@@ -1,0 +1,35 @@
+{
+  "_ayuda": "Datos del informe del crédito de la siembra (Banco Agrario N° 725069400241061). Generar con: node informes/generar_informe_siembra.mjs",
+  "titulo": "Informe de inversión",
+  "subtitulo": "Crédito para la siembra de los cultivos",
+  "titular": {
+    "nombre": "Brian Roberto Escobar Morales",
+    "cedula": "1.113.524.335"
+  },
+  "finca": "Finca El Retiro · Pradera, Valle del Cauca",
+  "credito": {
+    "numero": "725069400241061",
+    "linea": "Inversión ordinaria FINAGRO · Siembra",
+    "oficina": "Banco Agrario de Colombia · Oficina Palmira",
+    "monto": 13500000,
+    "desembolsado": 13018640,
+    "fecha_desembolso": "2026-05-05",
+    "soporte_desembolso": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/1791597720000-movimientos_cta6101_desembolsos.png"
+  },
+  "estado_credito": {
+    "fecha": "2026-10-19",
+    "fuente": "Banco Agrario de Colombia · respuesta al caso N° 2026080633 (19/10/2026)",
+    "texto": "La obligación 7250****1061 registra cero (0) días de mora; capital $13.500.000 e intereses corrientes $437.660 a esa fecha.",
+    "soporte": "https://sueramxzbibijuaamzbi.supabase.co/storage/v1/object/public/soportes/20bf624c-f465-4156-afbc-f4b157067aaa/banco_agrario_respuesta_caso_2026080633.pdf"
+  },
+  "lote_tomate": "1cb4c721-79c0-4d0c-ac3e-c2bebb5e91d2",
+  "descripcion": [
+    "Con este crédito se financió la siembra de los cultivos de la finca, principalmente el tomate: el lote de tomate Tronus en campo abierto (1.500 plantas, sembrado el 10 de junio de 2026) y la segunda siembra de tomate dentro del invernadero (semilla Tronus, plántulas Taurus y semilla Lesvos).",
+    "Los insumos agrícolas (fertilizantes, fungicidas, insecticidas y consumibles) se compraron con factura electrónica a nombre del titular y se guardan en la bodega de la finca, desde donde se aplican a los lotes. En el lote de tomate Tronus quedaron registradas aplicaciones por $3.769.075 entre el 10 de junio y el 10 de septiembre.",
+    "La mano de obra, las estacas, el alambre para el tutorado y los transportes se pagaron en efectivo en la finca. Parte de ese dinero se envió desde la cuenta del crédito (Banco Agrario *6101) a Andrés Felipe Escobar, encargado de la finca; cada envío tiene su aviso del banco en los anexos."
+  ],
+  "semillas_concepto": {
+    "1cb4c721-79c0-4d0c-ac3e-c2bebb5e91d2": "Semilla de tomate Tronus · 1.500 plantas (lote de tomate Tronus en campo abierto)"
+  },
+  "desde": "2026-05-05"
+}
