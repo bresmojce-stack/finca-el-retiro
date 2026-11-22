@@ -73,7 +73,7 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | PLE44275 | 23/09 | 45.400 | OK |
 | PLE44276 | 23/09 | 211.200 | OK (préstamo) |
 | PLE46000 | 30/10 | 13.724 | OK |
-| PRE28367 | 22/11 | 512.040 | Revisar: en la app solo el Yara 10-30-10 (2 bultos, 376.200, a bodega). Falta decidir las croquetas Ringo 30 kg (135.840): ¿perros de la finca o personal? |
+| PRE28367 | 22/11 | 512.040 | OK (Yara 10-30-10 a bodega 376.200 + croquetas Ringo para los perros de la finca 135.840, cuenta Otro) |
 
 **Último consecutivo: PLE46000 / PRE28367**
 
