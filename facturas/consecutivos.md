@@ -114,5 +114,6 @@ Regla de Brian (08/11/2026): si una compra anotada a mano tiene el mismo precio 
 - Trionex 30/08 ($52.000) e Incipio 21/09 ($85.800) no coinciden con ninguna factura: son compras aparte y se dejan.
 
 ## Personales (no van en la app)
+Regla de Brian (22/11/2026): las facturas personales no van a la app, salvo que sean de algo comprado para la finca. Si un producto de una factura personal parece de la finca, preguntarle antes de cargarlo.
 Éxito, Alkosto/Ktronix (Colombiana de Comercio), Claro, Celsia, Celsia Internet, Seguros Mundial, Comfandi.
 Revisión del 22/11: llegaron facturas de Ktronix/Alkosto (X2734013833, X2604012181, Z1744009680, nota 30G749596), Claro E6124038073, Celsia CCTT19743147 y Celsia Internet CIFE3281322: todas personales.
