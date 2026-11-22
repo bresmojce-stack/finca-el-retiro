@@ -1,7 +1,7 @@
 # Memoria de facturas (consecutivos)
 
 Lista de todas las facturas electrónicas que han llegado al correo (bresmojce@gmail.com) desde abril de 2026, y si están en la app.
-**Última revisión del correo: 08/11/2026.** En la próxima revisión, buscar solo lo que llegó después de esa fecha y agregarlo aquí.
+**Última revisión del correo: 22/11/2026.** En la próxima revisión, buscar solo lo que llegó después de esa fecha y agregarlo aquí.
 
 Cómo revisar: en Gmail buscar `after:AAAA/MM/DD (filename:zip OR subject:factura OR subject:FE)`. El asunto trae `NIT;EMPRESA;NÚMERO;01;...`.
 Por cada factura: ver si el número ya está en `compras.numero_factura`, y que la suma de sus filas sea igual al total de la factura.
@@ -73,8 +73,9 @@ Estados: **OK** = en la app y el total cuadra · **Personal** = no es de la finc
 | PLE44275 | 23/09 | 45.400 | OK |
 | PLE44276 | 23/09 | 211.200 | OK (préstamo) |
 | PLE46000 | 30/10 | 13.724 | OK |
+| PRE28367 | 22/11 | 512.040 | Revisar: en la app solo el Yara 10-30-10 (2 bultos, 376.200, a bodega). Falta decidir las croquetas Ringo 30 kg (135.840): ¿perros de la finca o personal? |
 
-**Último consecutivo: PLE46000 / PRE25847**
+**Último consecutivo: PLE46000 / PRE28367**
 
 ## Otros proveedores de la finca o del invernadero
 | Proveedor | Factura | Fecha | Total | Estado |
@@ -114,3 +115,4 @@ Regla de Brian (08/11/2026): si una compra anotada a mano tiene el mismo precio 
 
 ## Personales (no van en la app)
 Éxito, Alkosto/Ktronix (Colombiana de Comercio), Claro, Celsia, Celsia Internet, Seguros Mundial, Comfandi.
+Revisión del 22/11: llegaron facturas de Ktronix/Alkosto (X2734013833, X2604012181, Z1744009680, nota 30G749596), Claro E6124038073, Celsia CCTT19743147 y Celsia Internet CIFE3281322: todas personales.
