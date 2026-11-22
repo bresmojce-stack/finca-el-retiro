@@ -116,4 +116,4 @@ Regla de Brian (08/11/2026): si una compra anotada a mano tiene el mismo precio 
 ## Personales (no van en la app)
 Regla de Brian (22/11/2026): las facturas personales no van a la app, salvo que sean de algo comprado para la finca. Si un producto de una factura personal parece de la finca, preguntarle antes de cargarlo.
 Éxito, Alkosto/Ktronix (Colombiana de Comercio), Claro, Celsia, Celsia Internet, Seguros Mundial, Comfandi.
-Revisión del 22/11: llegaron facturas de Ktronix/Alkosto (X2734013833, X2604012181, Z1744009680, nota 30G749596), Claro E6124038073, Celsia CCTT19743147 y Celsia Internet CIFE3281322: todas personales.
+Revisión del 22/11 (productos revisados): Alkosto X2734013833 (cafetera, 114.900), X2604012181 (molino de café y mouse, 259.800), nota crédito 30G749596 (devolución del mouse, 89.900), Z1744009680 (89.900, Alkosto Cali Norte); Claro E6124038073, Celsia CCTT19743147 y Celsia Internet CIFE3281322: todas personales, nada de la finca.
